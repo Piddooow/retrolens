@@ -1,15 +1,25 @@
 """Mode SNAP untuk Retrolens: orang di depan kamera hancur jadi debu setelah jentikan jari."""
 
 import argparse
+import collections
+import json
 import math
 import os
+import queue
 import re
 import sys
+import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import mediapipe as mp
 import numpy as np
+
+try:
+    import sounddevice as sd
+except Exception:  # PortAudio tidak terpasang: mode suara dimatikan, sisanya tetap jalan.
+    sd = None
 
 CONFIG = {
     # kamera dan resolusi
@@ -20,12 +30,14 @@ CONFIG = {
     "proses_lebar": 640,
     "proses_tinggi": 360,
 
-    # gesture (AWAL, setel lewat overlay debug)
+    # gesture (disetel dari rekaman jentikan asli: rasio_cubit saat lepas 0.55 sampai 0.69,
+    # rasio_tengah turun 40 sampai 50% dari nilai tertinggi selama SIAP)
     "cubit_masuk": 0.35,
     "cubit_tahan_detik": 0.20,
-    "cubit_lepas": 0.70,
+    "cubit_lepas": 0.45,
     "lepas_maks_detik": 0.12,
-    "tengah_turun_min": 0.15,
+    "tengah_turun_min": 0.30,
+    "tangan_cocok_maks": 0.25,
     "siap_maks_detik": 1.5,
     "toleransi_hilang_detik": 0.15,
 
@@ -36,7 +48,7 @@ CONFIG = {
     "audio_onset_kali": 6.0,
     "audio_jendela_noise_detik": 2.0,
     "audio_dan_jendela_detik": 0.25,
-    "audio_ambang_awal_kali_noise": 10.0,
+    "audio_ambang_awal_kali_noise": 20.0,
     "audio_ring_blok": 64,
     "audio_diam_detik": 2.0,
     "audio_putus_detik": 1.0,
@@ -140,7 +152,7 @@ _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_ma
 _KUNCI_PECAHAN = ("plate_bobot_baru", "plate_ambang_bg", "plate_maks_orang", "plate_ambang_orang", "plate_cocok_min",
                   "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
-                  "flash_ambang_putih")
+                  "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks")
 _KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna")
 _KUNCI_TABEL = ("flash_naik_tabel", "flash_turun_tabel")
 
@@ -781,6 +793,377 @@ class SnapController:
             k = (t - self.kosong_akhir) / self.cfg["kembali_detik"]
             hasil = cv2.addWeighted(hasil, 1.0 - k, frame_tampil, k, 0.0)
         return self.flash.komposit(hasil, t)
+
+
+class SnapGestureDetector:
+    """Deteksi jentikan dari landmark: cubit jempol ke jari tengah, lalu lepas cepat sambil jari tengah turun."""
+
+    DIAM = "DIAM"
+    SIAP = "SIAP"
+
+    def __init__(self, cfg: Dict[str, Any]):
+        self.cfg = cfg
+        self.tangan = []  # type: List[Dict[str, Any]]
+
+    def reset(self) -> None:
+        self.tangan = []
+
+    @staticmethod
+    def rasio(lm: np.ndarray) -> Tuple[float, float]:
+        """(rasio_cubit, rasio_tengah), keduanya dibagi jarak pergelangan ke pangkal jari tengah."""
+        skala = max(float(np.linalg.norm(lm[0] - lm[9])), 1e-6)
+        return float(np.linalg.norm(lm[4] - lm[12])) / skala, float(np.linalg.norm(lm[12] - lm[0])) / skala
+
+    def _jejak_baru(self, lm: np.ndarray) -> Dict[str, Any]:
+        return {"state": self.DIAM, "lm": lm, "c": 0.0, "m": 0.0, "t_cubit": None, "t_siap": 0.0,
+                "m_ref": 0.0, "titik": (0.0, 0.0), "t_buka": None, "t_hilang": None, "perlu_buka": False,
+                "t_jentik": -math.inf}
+
+    def _cocokkan(self, daftar: List[np.ndarray], lebar: int) -> Dict[int, int]:
+        """Pasangkan tangan baru ke jejak lama lewat pergelangan terdekat; urutan dari MediaPipe bisa tertukar."""
+        pasangan = sorted((float(np.linalg.norm(jejak["lm"][0] - lm[0])), i, j)
+                          for i, jejak in enumerate(self.tangan) for j, lm in enumerate(daftar))
+        hasil = {}  # type: Dict[int, int]
+        dipakai = set()
+        for jarak, i, j in pasangan:
+            if j in hasil or i in dipakai or jarak > self.cfg["tangan_cocok_maks"] * lebar:
+                continue
+            hasil[j] = i
+            dipakai.add(i)
+        return hasil
+
+    def perbarui(self, now: float, daftar: List[np.ndarray], lebar: int,
+                 tinggi: int) -> List[Tuple[float, Tuple[float, float]]]:
+        """daftar berisi landmark (21, 2) piksel per tangan. Kembalikan event (waktu, titik jentik 0..1)."""
+        cfg = self.cfg
+        event = []  # type: List[Tuple[float, Tuple[float, float]]]
+        cocok = self._cocokkan(daftar, lebar)
+        lama = self.tangan
+        baru = []  # type: List[Dict[str, Any]]
+
+        for i, jejak in enumerate(lama):
+            if i in cocok.values():
+                continue
+            if jejak["t_hilang"] is None:
+                jejak["t_hilang"] = now
+            if now - jejak["t_hilang"] <= cfg["toleransi_hilang_detik"]:
+                baru.append(jejak)
+
+        for j, lm in enumerate(daftar):
+            jejak = lama[cocok[j]] if j in cocok else self._jejak_baru(lm)
+            c, m = self.rasio(lm)
+            jejak["lm"], jejak["c"], jejak["m"] = lm, c, m
+            titik = (float(lm[4][0] + lm[12][0]) / 2.0 / lebar, float(lm[4][1] + lm[12][1]) / 2.0 / tinggi)
+            baru.append(jejak)
+
+            if jejak["t_hilang"] is not None:
+                hilang = now - jejak["t_hilang"]
+                jejak["t_hilang"] = None
+                # Lepasan jentik sering kabur sehingga tangan hilang sebentar dari deteksi.
+                if jejak["state"] == self.SIAP and hilang <= cfg["toleransi_hilang_detik"] and c > cfg["cubit_lepas"]:
+                    event.append((now, jejak["titik"]))
+                    self._ke_diam(jejak, now, jentik=True)
+                    continue
+
+            if jejak["state"] == self.DIAM:
+                if c >= cfg["cubit_masuk"]:
+                    jejak["t_cubit"] = None
+                    jejak["perlu_buka"] = False
+                elif not jejak["perlu_buka"]:
+                    if jejak["t_cubit"] is None:
+                        jejak["t_cubit"] = now
+                    if now - jejak["t_cubit"] >= cfg["cubit_tahan_detik"]:
+                        jejak.update(state=self.SIAP, t_siap=now, m_ref=m, titik=titik, t_buka=None)
+            elif c < cfg["cubit_masuk"]:
+                jejak.update(t_buka=None, m_ref=max(jejak["m_ref"], m), titik=titik)
+                if now - jejak["t_siap"] > cfg["siap_maks_detik"]:
+                    # Harus membuka tangan dulu sebelum bisa SIAP lagi.
+                    self._ke_diam(jejak, now)
+                    jejak["perlu_buka"] = True
+            else:
+                if jejak["t_buka"] is None:
+                    jejak["t_buka"] = now
+                if now - jejak["t_buka"] > cfg["lepas_maks_detik"]:
+                    self._ke_diam(jejak, now)
+                elif c > cfg["cubit_lepas"] and m <= jejak["m_ref"] * (1.0 - cfg["tengah_turun_min"]):
+                    event.append((now, jejak["titik"]))
+                    self._ke_diam(jejak, now, jentik=True)
+
+        self.tangan = baru
+        return event
+
+    def _ke_diam(self, jejak: Dict[str, Any], now: float, jentik: bool = False) -> None:
+        jejak.update(state=self.DIAM, t_cubit=None, t_buka=None)
+        if jentik:
+            jejak["t_jentik"] = now
+
+
+class OnsetAudio:
+    """Deteksi onset per blok audio; terpisah dari thread supaya bisa diuji dengan sinyal sintetis."""
+
+    def __init__(self, cfg: Dict[str, Any], samplerate: int):
+        n = cfg["audio_blocksize"]
+        self.cfg = cfg
+        self.n = n
+        self.jendela = np.hanning(n).astype(np.float32)
+        self.pita = np.fft.rfftfreq(n, 1.0 / samplerate) >= cfg["audio_highpass_hz"]
+        panjang = max(1, int(cfg["audio_jendela_noise_detik"] * samplerate / n))
+        self.riwayat = collections.deque(maxlen=panjang)  # type: collections.deque
+        self.sebelum = 0.0
+        self.noise = 0.0
+        self.ambang_kalibrasi = None  # type: Optional[float]
+
+    def energi(self, blok: np.ndarray) -> float:
+        if len(blok) != self.n:
+            blok = np.resize(blok, self.n) if len(blok) else np.zeros(self.n, dtype=np.float32)
+        return float(np.mean(np.abs(np.fft.rfft(blok * self.jendela)[self.pita]) ** 2))
+
+    def ambang(self) -> float:
+        if self.ambang_kalibrasi is not None:
+            return self.ambang_kalibrasi
+        return self.noise * self.cfg["audio_ambang_awal_kali_noise"]
+
+    def proses(self, blok: np.ndarray) -> Tuple[float, bool]:
+        e = self.energi(blok)
+        self.noise = float(np.median(self.riwayat)) if self.riwayat else e
+        # Blok awal stream sering nol, jadi tunggu riwayat noise penuh sebelum menandai onset.
+        siap = len(self.riwayat) == self.riwayat.maxlen
+        onset = siap and e > self.ambang() and e > self.cfg["audio_onset_kali"] * self.sebelum
+        self.riwayat.append(e)
+        self.sebelum = e
+        return e, onset
+
+
+class AudioSnapDetector:
+    """Bunyi jentikan dari mikrofon. Callback hanya menyalin ke ring buffer; analisis di thread pekerja."""
+
+    def __init__(self, cfg: Dict[str, Any], path_kalibrasi: str):
+        self.cfg = cfg
+        self.path_kalibrasi = path_kalibrasi
+        self.aktif = False
+        self.error = ""
+        self.diam = False
+        self.level = 0.0
+        self.ambang = 0.0
+        self.onset = None  # type: Optional[OnsetAudio]
+        self.ambang_tersimpan = self._muat_kalibrasi()
+        self._event = queue.Queue()  # type: queue.Queue
+        self._pesan = queue.Queue()  # type: queue.Queue
+        self._antrean = queue.Queue()  # type: queue.Queue
+        self._stop = threading.Event()
+        self._kunci = threading.Lock()
+        self._kal = None  # type: Optional[Dict[str, Any]]
+        self._stream = None
+        self._thread = None  # type: Optional[threading.Thread]
+        self._ring = np.zeros((cfg["audio_ring_blok"], cfg["audio_blocksize"]), dtype=np.float32)
+        self._waktu = np.zeros(cfg["audio_ring_blok"], dtype=np.float64)
+        self._tulis = 0
+
+    def _muat_kalibrasi(self) -> Optional[float]:
+        try:
+            with open(self.path_kalibrasi) as f:
+                ambang = float(json.load(f)["ambang"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        return ambang if ambang > 0 else None
+
+    def mulai(self) -> bool:
+        if sd is None:
+            self.error = "Modul sounddevice tidak tersedia"
+            return False
+        try:
+            info = sd.query_devices(kind="input")
+            samplerate = int(info["default_samplerate"])
+            self.onset = OnsetAudio(self.cfg, samplerate)
+            self.onset.ambang_kalibrasi = self.ambang_tersimpan
+            self._stream = sd.InputStream(samplerate=samplerate, blocksize=self.cfg["audio_blocksize"],
+                                          channels=1, dtype="float32", callback=self._callback)
+            self._stream.start()
+        except Exception as e:
+            self.error = "Mikrofon tidak bisa dibuka (%s)" % e
+            self._tutup_stream()
+            return False
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._kerja, name="audio-snap", daemon=True)
+        self._thread.start()
+        self.aktif = True
+        return True
+
+    def _callback(self, indata: np.ndarray, frames: int, waktu: Any, status: Any) -> None:
+        # Berjalan di thread audio real-time: tanpa alokasi array baru, hanya salin ke slot ring buffer.
+        i = self._tulis % len(self._ring)
+        self._ring[i, :frames] = indata[:frames, 0]
+        self._waktu[i] = time.monotonic()
+        self._tulis += 1
+        self._antrean.put_nowait(i)
+
+    def _kerja(self) -> None:
+        cfg = self.cfg
+        terakhir = time.monotonic()
+        t_bersuara = terakhir
+        try:
+            while not self._stop.is_set():
+                try:
+                    i = self._antrean.get(timeout=0.1)
+                except queue.Empty:
+                    if time.monotonic() - terakhir > cfg["audio_putus_detik"]:
+                        self.error = "Mikrofon terputus"
+                        self.aktif = False
+                        return
+                    continue
+                blok = self._ring[i].copy()
+                t = float(self._waktu[i])
+                terakhir = time.monotonic()
+                # Izin mikrofon yang ditolak di macOS tidak memunculkan error, hanya sampel nol.
+                if np.any(blok):
+                    t_bersuara = t
+                    self.diam = False
+                elif t - t_bersuara > cfg["audio_diam_detik"]:
+                    self.diam = True
+                e, onset = self.onset.proses(blok)
+                self.level = e
+                self.ambang = self.onset.ambang()
+                with self._kunci:
+                    kal = self._kal
+                if kal is not None:
+                    self._langkah_kalibrasi(kal, t, e)
+                elif onset:
+                    self._event.put(t)
+        except Exception as e:
+            self.error = "Audio berhenti (%s)" % e
+            self.aktif = False
+
+    def mulai_kalibrasi(self, now: float) -> bool:
+        if not self.aktif:
+            return False
+        with self._kunci:
+            self._kal = {"mulai": now, "hening": [], "jentik": []}
+        return True
+
+    def sedang_kalibrasi(self) -> bool:
+        with self._kunci:
+            return self._kal is not None
+
+    def teks_kalibrasi(self, now: float) -> str:
+        with self._kunci:
+            kal = self._kal
+        if kal is None:
+            return ""
+        dt = now - kal["mulai"]
+        hening = self.cfg["audio_kalibrasi_hening_detik"]
+        if dt < hening:
+            return "Kalibrasi suara: diam sebentar... %d" % int(math.ceil(hening - dt))
+        sisa = hening + self.cfg["audio_kalibrasi_jentik_detik"] - dt
+        return "Kalibrasi suara: jentikkan jari %d kali... %d" % (
+            self.cfg["audio_kalibrasi_jumlah"], max(1, int(math.ceil(sisa))))
+
+    def _langkah_kalibrasi(self, kal: Dict[str, Any], t: float, e: float) -> None:
+        dt = t - kal["mulai"]
+        hening = self.cfg["audio_kalibrasi_hening_detik"]
+        if dt < 0:
+            return
+        if dt < hening:
+            kal["hening"].append(e)
+        elif dt < hening + self.cfg["audio_kalibrasi_jentik_detik"]:
+            kal["jentik"].append((t, e))
+        else:
+            with self._kunci:
+                self._kal = None
+            self._pesan.put(self._selesaikan_kalibrasi(kal))
+
+    def _selesaikan_kalibrasi(self, kal: Dict[str, Any]) -> str:
+        cfg = self.cfg
+        if not kal["hening"] or not kal["jentik"]:
+            return "Kalibrasi gagal, tekan K lagi"
+        # Puncak saat hening, bukan median: median terlalu rendah sehingga suara bicara ikut memicu.
+        noise = max(kal["hening"])
+        puncak = []  # type: List[Tuple[float, float]]
+        for t, e in sorted(kal["jentik"], key=lambda p: -p[1]):
+            if e <= noise:
+                break
+            if all(abs(t - tp) >= cfg["audio_kalibrasi_jarak_detik"] for tp, _ in puncak):
+                puncak.append((t, e))
+            if len(puncak) == cfg["audio_kalibrasi_jumlah"]:
+                break
+        if len(puncak) < cfg["audio_kalibrasi_jumlah"]:
+            return "Kalibrasi gagal: hanya %d jentikan terdengar, tekan K lagi" % len(puncak)
+        ambang = math.sqrt(max(noise, 1e-12) * min(e for _, e in puncak))
+        self.onset.ambang_kalibrasi = ambang
+        self.ambang_tersimpan = ambang
+        try:
+            with open(self.path_kalibrasi, "w") as f:
+                json.dump({"ambang": ambang, "noise": noise, "jentik_terlemah": min(e for _, e in puncak),
+                           "dibuat": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=2)
+        except OSError as e:
+            return "Kalibrasi dipakai tapi gagal disimpan (%s)" % e
+        return "Kalibrasi suara tersimpan"
+
+    def ambil_event(self) -> List[float]:
+        return self._kuras(self._event)
+
+    def ambil_pesan(self) -> List[str]:
+        return self._kuras(self._pesan)
+
+    @staticmethod
+    def _kuras(q: queue.Queue) -> List[Any]:
+        isi = []
+        while True:
+            try:
+                isi.append(q.get_nowait())
+            except queue.Empty:
+                return isi
+
+    def _tutup_stream(self) -> None:
+        if self._stream is None:
+            return
+        try:
+            self._stream.stop()
+            self._stream.close()
+        except Exception as e:
+            print("Gagal menutup stream audio:", e)
+        self._stream = None
+
+    def hentikan(self) -> None:
+        self._stop.set()
+        self._tutup_stream()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        self.aktif = False
+
+
+class PemicuGabungan:
+    """Gabungkan event gesture dan suara sesuai mode trigger."""
+
+    def __init__(self, cfg: Dict[str, Any]):
+        self.cfg = cfg
+        self._gestur = []  # type: List[Tuple[float, Tuple[float, float]]]
+        self._suara = []  # type: List[float]
+
+    def reset(self) -> None:
+        self._gestur = []
+        self._suara = []
+
+    def periksa(self, now: float, mode: str, gestur: List[Tuple[float, Tuple[float, float]]],
+                suara: List[float]) -> Tuple[bool, Optional[Tuple[float, float]]]:
+        """(dipicu, titik asal flash). Titik asal None berarti pakai posisi cadangan."""
+        if mode == "GESTUR":
+            return (True, gestur[-1][1]) if gestur else (False, None)
+        if mode == "SUARA":
+            return (True, None) if suara else (False, None)
+        if mode == "ATAU":
+            if gestur:
+                return True, gestur[-1][1]
+            return (True, None) if suara else (False, None)
+        # DAN: suara biasanya tiba lebih dulu daripada gambar kamera, jadi keduanya ditahan sebentar.
+        jendela = self.cfg["audio_dan_jendela_detik"]
+        self._gestur = [g for g in self._gestur + gestur if now - g[0] <= jendela]
+        self._suara = [t for t in self._suara + suara if now - t <= jendela]
+        for t_g, asal in self._gestur:
+            if any(abs(t_g - t_s) <= jendela for t_s in self._suara):
+                self.reset()
+                return True, asal
+        return False, None
 
 
 def buat_lembar_uji(path_gambar: str, path_bg: Optional[str], path_keluar: Optional[str],
