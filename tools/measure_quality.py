@@ -73,8 +73,6 @@ def measure(folder: str) -> int:
         meta = json.load(f)
     cfg, frames, fps = meta["config"], meta["frames"], meta["fps"]
     report = Report()
-    flash_end = cfg["flash_naik_detik"] + cfg["flash_tahan_detik"] + cfg["flash_turun_detik"] \
-        + cfg["flash_tunda_ujung_detik"]
     band_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * SEAM_BAND_PX + 1, 2 * SEAM_BAND_PX + 1))
 
     residue, seams = [], []
@@ -92,7 +90,9 @@ def measure(folder: str) -> int:
             prev_state = state
             continue
         inside = zone > 0
-        if fr["effect_t"] >= flash_end:
+        # The seam is where camera pixels meet plate pixels, so it is measured once only the base
+        # layer is drawn; during the dissolve the dust drifts across the band by design.
+        if state in INVISIBLE_STATES:
             band = (cv2.dilate(inside.astype(np.uint8), band_kernel) > 0) & ~inside
             if band.any():
                 seams.append(float(np.abs(out[band].astype(np.int16) - live[band]).mean()))
@@ -120,7 +120,7 @@ def measure(folder: str) -> int:
                    "worst frame %.2f, mean %.2f levels in the %d px band (limit %.1f)" % (
                        max(seams), float(np.mean(seams)), SEAM_BAND_PX, LIMITS["seam"]))
     else:
-        report.add("seam", None, "no effect frames after the flash")
+        report.add("seam", None, "no INVISIBLE frames")
     if inside_diff:
         s_in = float(np.concatenate(inside_diff).std())
         s_out = float(np.concatenate(outside_diff).std())

@@ -49,7 +49,9 @@ class BackgroundEngine:
         self._rng = np.random.default_rng(cfg["debu_seed"] + 101)
         self._dither = np.random.default_rng(cfg["debu_seed"] + 102)
         self._hann = cv2.createHanningWindow(tuple(cfg["bg_moved_grid"]), cv2.CV_32F)
-        self._unit_tiles = None  # type: Optional[np.ndarray]
+        # Unit noise tiles are drawn first, here, so the first vanish frame does not pay for them.
+        tile_px = cfg["bg_noise_tile_px"]
+        self._unit_tiles = self._rng.standard_normal((cfg["bg_noise_tiles"], tile_px, tile_px, 3)).astype(np.float32)
         self.sigma = np.zeros(3, dtype=np.float32)
         self.gain_small = None  # type: Optional[np.ndarray]
         self.last_check = (0.0, 1.0)
@@ -326,21 +328,20 @@ class BackgroundEngine:
         cfg = self.cfg
         if not cfg["bg_noise_on"] or float(self.sigma.max()) <= 0.0:
             return adj
-        ys, xs = np.nonzero(zone)
-        if len(ys) == 0:
+        x0, y0, w, h = cv2.boundingRect((zone > 0).view(np.uint8))
+        if w == 0 or h == 0:
             return adj
         tile_px = cfg["bg_noise_tile_px"]
-        if self._unit_tiles is None:
-            self._unit_tiles = self._rng.standard_normal(
-                (cfg["bg_noise_tiles"], tile_px, tile_px, 3)).astype(np.float32)
         tile = self._unit_tiles[int(self._rng.integers(cfg["bg_noise_tiles"]))]
         oy, ox = (int(v) for v in self._rng.integers(tile_px, size=2))
-        y0, y1, x0, x1 = int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1
-        noise = tile[np.ix_((np.arange(y0, y1) + oy) % tile_px, (np.arange(x0, x1) + ox) % tile_px)]
-        weight = zone[y0:y1, x0:x1].astype(np.float32)[..., None]
+        # Pixel (y, x) gets tile[(y + oy) % tile_px, (x + ox) % tile_px]: roll once, then repeat.
+        rolled = np.roll(tile, (-((y0 + oy) % tile_px), -((x0 + ox) % tile_px)), axis=(0, 1))
+        noise = np.tile(rolled, (-(-h // tile_px), -(-w // tile_px), 1))[:h, :w]
+        weight = zone[y0:y0 + h, x0:x0 + w].astype(np.float32)
+        noise = cv2.multiply(noise, cv2.merge([weight * s for s in self.sigma]))
         out = adj.copy()
-        out[y0:y1, x0:x1] = cv2.convertScaleAbs(adj[y0:y1, x0:x1].astype(np.float32)
-                                                + noise * self.sigma * weight)
+        # Saturating add: values below 0 clip to 0 (convertScaleAbs would mirror them upward).
+        out[y0:y0 + h, x0:x0 + w] = cv2.add(adj[y0:y0 + h, x0:x0 + w], noise, dtype=cv2.CV_8U)
         return out
 
     def fill_unknown(self, adj: np.ndarray, zone: np.ndarray) -> np.ndarray:

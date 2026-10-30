@@ -24,52 +24,14 @@ except Exception:  # PortAudio tidak terpasang: mode suara dimatikan, sisanya te
 
 from snap.background import CAPTURE_MESSAGES, CAPTURE_OK, BackgroundEngine, dilate_to  # noqa: E402,F401
 from snap.config import CONFIG, MODE_TRIGGER, validasi_config  # noqa: E402,F401
+from snap.ash import AshAmbient  # noqa: E402
+from snap.config import hex_ke_bgr  # noqa: E402,F401
+from snap.dissolve import DissolveRenderer, noise_fraktal, normalisasi, smoothstep  # noqa: E402,F401
+from snap.flash import FlashOverlay, kurva_flash  # noqa: E402,F401
 from snap.matte import MatteEngine  # noqa: E402
 
 MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds, then snap again"
 MSG_ESTIMATED = "Background estimated, result may not be perfect"
-
-
-def smoothstep(x: float) -> float:
-    x = min(1.0, max(0.0, x))
-    return x * x * (3.0 - 2.0 * x)
-
-
-
-def hex_ke_bgr(warna: str) -> np.ndarray:
-    return np.array([int(warna[5:7], 16), int(warna[3:5], 16), int(warna[1:3], 16)], dtype=np.float32)
-
-
-def normalisasi(nilai: np.ndarray) -> np.ndarray:
-    rendah, tinggi = float(nilai.min()), float(nilai.max())
-    if tinggi - rendah < 1e-9:
-        return np.zeros(nilai.shape, dtype=np.float32)
-    return ((nilai - rendah) / (tinggi - rendah)).astype(np.float32)
-
-
-def kurva_flash(t: Any, cfg: Dict[str, Any]) -> np.ndarray:
-    """Kekuatan flash 0..1 pada t detik sejak jentikan; t boleh skalar atau array."""
-    t = np.asarray(t, dtype=np.float32)
-    naik, tahan, turun = cfg["flash_naik_detik"], cfg["flash_tahan_detik"], cfg["flash_turun_detik"]
-    xn, yn = cfg["flash_naik_tabel"]
-    xt, yt = cfg["flash_turun_tabel"]
-    # np.interp menahan nilai di ujung tabel, jadi cukup dipotong per fase.
-    s_naik = np.interp(t / naik, xn, yn)
-    s_turun = np.interp((t - naik - tahan) / turun, xt, yt)
-    hasil = np.where(t < naik, s_naik, np.where(t < naik + tahan, 1.0, s_turun))
-    hasil = np.where((t < 0) | (t >= naik + tahan + turun), 0.0, hasil)
-    return hasil.astype(np.float32)
-
-
-def noise_fraktal(tinggi: int, lebar: int, oktaf: Tuple[int, ...], amp_kali: float,
-                  rng: np.random.Generator) -> np.ndarray:
-    total = np.zeros((tinggi, lebar), dtype=np.float32)
-    amp = 1.0
-    for sel in oktaf:
-        kasar = rng.random((tinggi // sel + 2, lebar // sel + 2), dtype=np.float32)
-        total += amp * cv2.resize(kasar, (lebar, tinggi), interpolation=cv2.INTER_CUBIC)
-        amp *= amp_kali
-    return normalisasi(total)
 
 
 class PersonSegmenter:
@@ -123,208 +85,6 @@ class PersonSegmenter:
         self._seg.close()
 
 
-class FlashOverlay:
-    """Flash radial dari titik jentikan, kurva dari pengukuran reference snap."""
-
-    def __init__(self, cfg: Dict[str, Any], lebar: int, tinggi: int):
-        self.cfg = cfg
-        self.lebar, self.tinggi = lebar, tinggi
-        self.dekat = hex_ke_bgr(cfg["flash_warna_dekat"])
-        self.jauh = hex_ke_bgr(cfg["flash_warna_jauh"])
-        naik = cfg["flash_naik_detik"]
-        self.mulai_putih = naik + cfg["flash_tunda_ujung_detik"]
-        self.akhir_putih = naik + cfg["flash_tahan_detik"]
-        self.akhir = self.akhir_putih + cfg["flash_turun_detik"] + cfg["flash_tunda_ujung_detik"]
-        self.jarak = np.zeros((tinggi, lebar), dtype=np.float32)
-        self.warna_dasar = np.zeros((tinggi, lebar, 3), dtype=np.float32)
-
-    def mulai(self, asal: Tuple[float, float]) -> None:
-        """asal dalam koordinat ternormalisasi 0..1."""
-        ys, xs = np.mgrid[0:self.tinggi, 0:self.lebar].astype(np.float32) + 0.5
-        d = np.hypot(xs - asal[0] * self.lebar, ys - asal[1] * self.tinggi)
-        self.jarak = (d / d.max()).astype(np.float32)
-        j = self.jarak[..., None]
-        self.warna_dasar = (self.dekat * (1.0 - j) + self.jauh * j).astype(np.float32)
-
-    def kekuatan(self, t: float) -> np.ndarray:
-        return kurva_flash(t - self.jarak * self.cfg["flash_tunda_ujung_detik"], self.cfg)
-
-    def putih_penuh(self, t: float) -> bool:
-        return self.mulai_putih <= t < self.akhir_putih
-
-    def komposit(self, frame: np.ndarray, t: float) -> np.ndarray:
-        if t <= 0 or t >= self.akhir:
-            return frame
-        if self.putih_penuh(t):
-            return np.full_like(frame, 255)
-        s = self.kekuatan(t)
-        if float(s.max()) <= 0.0:
-            return frame
-        ambang = self.cfg["flash_ambang_putih"]
-        ke_putih = np.clip((s - ambang) / (1.0 - ambang), 0.0, 1.0)[..., None]
-        lapisan_warna = (self.warna_dasar * (1.0 - ke_putih) + 255.0 * ke_putih) * s[..., None]
-        sisa = 1.0 - s
-        tinggi, lebar = frame.shape[:2]
-        # Lapisan flash halus, jadi dihitung kecil lalu diperbesar supaya frame tetap tajam.
-        if (lebar, tinggi) != (self.lebar, self.tinggi):
-            lapisan_warna = cv2.resize(lapisan_warna, (lebar, tinggi), interpolation=cv2.INTER_LINEAR)
-            sisa = cv2.resize(sisa, (lebar, tinggi), interpolation=cv2.INTER_LINEAR)
-        return cv2.convertScaleAbs(frame.astype(np.float32) * sisa[..., None] + lapisan_warna)
-
-
-class Disintegration:
-    """Butiran debu dari siluet beku, digambar langsung ke posisi barunya tiap frame."""
-
-    def __init__(self, cfg: Dict[str, Any], lebar: int, tinggi: int):
-        self.cfg = cfg
-        self.lebar, self.tinggi = lebar, tinggi
-        self.jumlah = 0
-        self.ukuran = cfg["debu_ukuran_butir"]
-        self._offset = np.zeros(1, dtype=np.int64)
-        self._idx0 = np.zeros(0, dtype=np.int64)
-        self.lepas = np.zeros(0, dtype=np.float32)
-        # Quality metrics: visible mass relative to the start, and the largest particle move (process px).
-        self.massa = 0.0
-        self.langkah_maks = 0.0
-        self._xy_lalu = np.zeros((0, 2), dtype=np.float32)
-
-    def siapkan(self, beku: np.ndarray, mask: np.ndarray, ukuran: int) -> None:
-        cfg = self.cfg
-        s = ukuran
-        gl, gt = self.lebar // s, self.tinggi // s
-        warna_grid = cv2.resize(beku[:gt * s, :gl * s], (gl, gt), interpolation=cv2.INTER_AREA)
-        mask_grid = cv2.resize(mask[:gt * s, :gl * s].astype(np.float32), (gl, gt), interpolation=cv2.INTER_AREA)
-        iy, ix = np.nonzero(mask_grid > cfg["mask_ambang"])
-        rng = np.random.default_rng(cfg["debu_seed"])
-
-        self.ukuran = s
-        self.jumlah = len(iy)
-        self._offset = np.array([dy * self.lebar + dx for dy in range(s) for dx in range(s)], dtype=np.int64)
-        self.x0 = (ix * s).astype(np.float32)
-        self.y0 = (iy * s).astype(np.float32)
-        self._idx0 = (iy * s).astype(np.int64) * self.lebar + (ix * s).astype(np.int64)
-        self.warna = warna_grid[iy, ix].astype(np.float32)
-        self._beku = beku.reshape(-1, 3).astype(np.float32)
-        self.massa = 1.0
-        self.langkah_maks = 0.0
-        self._xy_lalu = np.stack([self.x0, self.y0], axis=1)
-        if self.jumlah == 0:
-            self.lepas = np.zeros(0, dtype=np.float32)
-            return
-
-        noise = noise_fraktal(gt, gl, tuple(cfg["debu_oktaf"]), cfg["debu_amplitudo_oktaf"], rng)[iy, ix]
-        ynorm = (iy - iy.min()) / float(max(1, iy.max() - iy.min()))
-        urutan = normalisasi(cfg["debu_bobot_vertikal"] * ynorm + cfg["debu_bobot_noise"] * normalisasi(noise))
-        self.lepas = (urutan * cfg["debu_sapuan_detik"]).astype(np.float32)
-        self.jitter = rng.uniform(cfg["debu_jitter_min"], cfg["debu_jitter_maks"],
-                                  (self.jumlah, 2)).astype(np.float32)
-        self.fase = rng.uniform(0.0, 2.0 * math.pi, self.jumlah).astype(np.float32)
-
-    def posisi(self, pilih: np.ndarray, umur_butir: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Posisi kiri atas butir terpilih setelah terbang selama umur_butir detik."""
-        cfg = self.cfg
-        at = umur_butir
-        jit = self.jitter[pilih]
-        arah_x = 1.0 if cfg["debu_balik_horizontal"] else -1.0
-        dx = arah_x * (cfg["debu_angin_kiri"] * at + 0.5 * cfg["debu_percepatan_kiri"] * at * at) * self.lebar * jit[:, 0]
-        dy = -(cfg["debu_angin_naik"] * at + 0.5 * cfg["debu_percepatan_naik"] * at * at) * self.tinggi * jit[:, 1]
-        fase = self.fase[pilih]
-        # Goyangan dimulai dari nol supaya butir tidak melompat saat lepas.
-        dy += cfg["debu_goyang_px"] * (np.sin(2.0 * math.pi * cfg["debu_goyang_hz"] * at + fase) - np.sin(fase))
-        return self.x0[pilih] + dx, self.y0[pilih] + dy
-
-    def _catat_metrik(self, xy: np.ndarray, massa_butir: float) -> None:
-        self.massa = massa_butir / max(1, self.jumlah)
-        both = ~np.isnan(xy[:, 0]) & ~np.isnan(self._xy_lalu[:, 0])
-        self.langkah_maks = float(np.hypot(*(xy[both] - self._xy_lalu[both]).T).max()) if both.any() else 0.0
-        self._xy_lalu = xy
-
-    def selesai(self, t_debu: float) -> bool:
-        return self.jumlah == 0 or t_debu >= float(self.lepas.max()) + self.cfg["debu_umur_detik"]
-
-    def render(self, kanvas: np.ndarray, t_debu: float) -> int:
-        """Gambar butir ke kanvas float32 (tinggi*lebar, 3); kembalikan jumlah butir yang tampil."""
-        if self.jumlah == 0:
-            self.massa = 0.0
-            return 0
-        cfg = self.cfg
-        umur = cfg["debu_umur_detik"]
-        a = np.float32(t_debu) - self.lepas
-        xy = np.full((self.jumlah, 2), np.nan, dtype=np.float32)
-
-        # Butir yang belum lepas memakai piksel asli frame beku, jadi badan tetap tajam.
-        belum = a <= 0
-        if belum.any():
-            dasar = self._idx0[belum]
-            for off in self._offset:
-                idx = dasar + off
-                kanvas[idx] = self._beku[idx]
-
-        xy[belum, 0] = self.x0[belum]
-        xy[belum, 1] = self.y0[belum]
-        terbang = np.nonzero((a > 0) & (a < umur))[0]
-        if len(terbang) == 0:
-            self._catat_metrik(xy, float(belum.sum()))
-            return int(belum.sum())
-        at = a[terbang]
-        xf, yf = self.posisi(terbang, at)
-        xy[terbang, 0] = xf
-        xy[terbang, 1] = yf
-
-        s = self.ukuran
-        x = np.rint(xf).astype(np.int64)
-        y = np.rint(yf).astype(np.int64)
-        di_layar = (x >= 0) & (x <= self.lebar - s) & (y >= 0) & (y <= self.tinggi - s)
-        x, y = x[di_layar], y[di_layar]
-        alpha = (1.0 - at[di_layar] / umur)[:, None]
-        self._catat_metrik(xy, float(belum.sum()) + float(alpha.sum()))
-        warna_a = self.warna[terbang[di_layar]] * alpha
-        sisa = 1.0 - alpha
-        dasar = y * self.lebar + x
-        for off in self._offset:
-            idx = dasar + off
-            kanvas[idx] = kanvas[idx] * sisa + warna_a
-        return int(belum.sum()) + len(x)
-
-
-class AshAmbient:
-    """Bintik abu kecil yang melayang searah angin setelah flash."""
-
-    def __init__(self, cfg: Dict[str, Any], lebar: int, tinggi: int):
-        self.cfg = cfg
-        self.lebar, self.tinggi = lebar, tinggi
-        self.warna = hex_ke_bgr(cfg["abu_warna"])
-        self.x0 = np.zeros(0, dtype=np.float32)
-
-    def siapkan(self, rng: np.random.Generator) -> None:
-        n = self.cfg["abu_jumlah"]
-        self.x0 = rng.uniform(0, self.lebar, n).astype(np.float32)
-        self.y0 = rng.uniform(0, self.tinggi, n).astype(np.float32)
-        self.ukuran = rng.integers(1, self.cfg["abu_ukuran_maks"] + 1, n)
-
-    def render(self, kanvas: np.ndarray, t: float) -> None:
-        """t dalam detik sejak jentikan; kanvas float32 (tinggi*lebar, 3)."""
-        cfg = self.cfg
-        mulai, akhir = cfg["debu_mulai_detik"], cfg["abu_selesai_detik"]
-        if not cfg["abu_ambient"] or len(self.x0) == 0 or t < mulai or t >= akhir:
-            return
-        a = t - mulai
-        alpha = cfg["abu_alpha"] * (1.0 - a / (akhir - mulai))
-        arah_x = 1.0 if cfg["debu_balik_horizontal"] else -1.0
-        rel = cfg["abu_kecepatan_relatif"]
-        x = np.mod(self.x0 + arah_x * rel * cfg["debu_angin_kiri"] * self.lebar * a, self.lebar)
-        y = np.mod(self.y0 - rel * cfg["debu_angin_naik"] * self.tinggi * a, self.tinggi)
-        for s in np.unique(self.ukuran):
-            pilih = self.ukuran == s
-            xi = np.minimum(x[pilih].astype(np.int64), self.lebar - s)
-            yi = np.minimum(y[pilih].astype(np.int64), self.tinggi - s)
-            dasar = yi * self.lebar + xi
-            for dy in range(s):
-                for dx in range(s):
-                    idx = dasar + dy * self.lebar + dx
-                    kanvas[idx] = kanvas[idx] * (1.0 - alpha) + self.warna * alpha
-
-
 class SnapController:
     """State machine SNAP. Semua waktu (now) berupa detik monotonic yang diberikan pemanggil."""
 
@@ -345,9 +105,9 @@ class SnapController:
         self.bg_siap = False
         self.bg_persen = 0
         self.flash = FlashOverlay(cfg, lebar, tinggi)
-        self.debu = Disintegration(cfg, lebar, tinggi)
-        self.abu = AshAmbient(cfg, lebar, tinggi)
-        self.ukuran_butir = cfg["debu_ukuran_butir"]
+        self.debu = DissolveRenderer(cfg)
+        self.abu = AshAmbient(cfg)
+        self.ukuran_butir = cfg["particle_cell_px"]
 
         self.t_ganti = self.flash.mulai_putih
         self.debu_akhir = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
@@ -367,21 +127,22 @@ class SnapController:
         self._mask = None  # type: Optional[np.ndarray]
         self._tint = None  # type: Optional[np.ndarray]
         self._tint_t = -math.inf
-        self._kanvas = np.zeros((tinggi, lebar, 3), dtype=np.float32)
-        self._kanvas_datar = self._kanvas.reshape(-1, 3)
         self._kosongkan_snapshot()
 
     def _kosongkan_snapshot(self) -> None:
-        self._beku = None  # type: Optional[np.ndarray]
         self._beku_tampil = None  # type: Optional[np.ndarray]
+        self._matte_beku = None  # type: Optional[np.ndarray]
         self._zona = None  # type: Optional[np.ndarray]
         self._zf = None  # type: Optional[np.ndarray]
+        # Pixels the experimental fallback estimated into the plate.
+        self._terisi = None  # type: Optional[np.ndarray]
         self._perkiraan = False
-        self._biner = None  # type: Optional[np.ndarray]
-        self._conf_beku = None  # type: Optional[np.ndarray]
-        self._plate_f = None  # type: Optional[np.ndarray]
         self._siap = False
-        self._cache = None  # type: Optional[np.ndarray]
+        # Base layer data (union zone, plate view) cached for one live frame and matte.
+        self._dasar_kunci = None  # type: Optional[Tuple[np.ndarray, Optional[np.ndarray]]]
+        self._dasar_hasil = None  # type: Optional[Tuple[np.ndarray, np.ndarray]]
+        # Base layer data used by the last rendered frame, for the quality tools.
+        self._info_dasar = None  # type: Optional[Tuple[np.ndarray, np.ndarray]]
 
     def set_pesan(self, teks: str, now: float, durasi: Optional[float] = None) -> None:
         self._pesan = teks
@@ -393,9 +154,6 @@ class SnapController:
     def waktu_efek(self, now: float) -> float:
         return now - self.t0 if self.state in (self.SNAP, self.KOSONG, self.KEMBALI) else 0.0
 
-    def butuh_segmentasi(self) -> bool:
-        return self.state in (self.LIVE, self.PLATE_CAPTURE)
-
     def siap_dipicu(self, now: float) -> bool:
         return self.state == self.LIVE and now >= self.cooldown_sampai
 
@@ -406,12 +164,19 @@ class SnapController:
         return self.prof.stage(nama) if self.prof is not None else contextlib.nullcontext()
 
     def amati(self, now: float, frame_tampil: np.ndarray, frame_proses: np.ndarray, mask: np.ndarray) -> None:
-        """Latest display frame, its process size copy, and the person mask (LIVE or PLATE_CAPTURE only)."""
+        """Latest display frame, its process size copy, and the person mask (every state)."""
         self._frame_tampil = frame_tampil
         self._frame = frame_proses
         self._mask = mask
         with self._tahap("matte"):
             self.matte.update(frame_tampil, mask)
+        if self.state not in (self.LIVE, self.PLATE_CAPTURE):
+            t = now - self.t0
+            # The base layer also hides the live person; preparing it here keeps it out of the render stage.
+            if t >= self.t_ganti and not self.flash.putih_penuh(t):
+                self._dasar(frame_tampil)
+            return
+        with self._tahap("matte"):
             zona = self.matte.core()
         with self._tahap("background"):
             if self.state == self.LIVE:
@@ -449,7 +214,7 @@ class SnapController:
             return None
         hold = self.cfg["pesan_detik"]
         fade = self.cfg["coverage_tint_fade_s"]
-        alpha = self.cfg["coverage_tint_alpha"] * (1.0 - smoothstep((now - self._tint_t - hold) / fade))
+        alpha = self.cfg["coverage_tint_alpha"] * (1.0 - float(smoothstep((now - self._tint_t - hold) / fade)))
         if alpha <= 0.0:
             self._tint = None
             return None
@@ -466,10 +231,10 @@ class SnapController:
         """Mulai efek dari frame dan mask terakhir. asal = titik jentik ternormalisasi 0..1."""
         if not self.siap_dipicu(now):
             return False
-        if self._frame is None or self._mask is None:
+        if self._frame_tampil is None or self._mask is None or self.matte.matte is None:
             self.set_pesan("Tidak ada orang terdeteksi", now)
             return False
-        biner, luas = PersonSegmenter.mask_snap(self._mask, self.cfg)
+        _, luas = PersonSegmenter.mask_snap(self._mask, self.cfg)
         if luas < self.cfg["mask_luas_min_orang"]:
             self.set_pesan("Tidak ada orang terdeteksi", now)
             return False
@@ -483,14 +248,12 @@ class SnapController:
             self._tint_t = now
             return False
         self._kosongkan_snapshot()
-        # Snapshot dibekukan di sini; mask live tidak dipakai lagi selama efek.
-        self._beku = self._frame.copy()
+        # Snapshot dibekukan di sini; dissolve memakai frame dan matte ini sampai selesai.
         self._beku_tampil = self._frame_tampil.copy()
+        self._matte_beku = self.matte.matte.copy()
         self._zona = zona
         self._zf = zf
         self._perkiraan = perkiraan
-        self._biner = biner
-        self._conf_beku = self._mask.copy()
         self.flash.mulai(asal if asal is not None else tuple(self.cfg["flash_asal_cadangan"]))
         self.state = self.SNAP
         self.t0 = now
@@ -507,46 +270,84 @@ class SnapController:
 
     def _siapkan(self) -> None:
         """Dipanggil sekali saat layar putih penuh, jadi jeda persiapan tidak terlihat."""
-        plate = self.bg.plate_adj(self._beku_tampil)
         if self._perkiraan:
-            plate = self.bg.fill_unknown(plate, self._zona)
-        self._plate_f = cv2.resize(plate, (self.lebar, self.tinggi), interpolation=cv2.INTER_AREA).astype(np.float32)
-        self.debu.siapkan(self._beku, self._biner, self.ukuran_butir)
-        self.abu.siapkan(np.random.default_rng(self.cfg["debu_seed"] + 1))
+            # Experimental: estimate the unseen room once and keep it in the plate for every frame.
+            # The pixels stay unknown, so the room learning replaces them later.
+            hole = self._zona & ~self.bg.known()
+            self.bg.plate[:] = self.bg.fill_unknown(self.bg.plate, self._zona)
+            self._terisi = hole
+        self.debu.siapkan(self._beku_tampil, self._matte_beku, self._zf, self.ukuran_butir)
+        tinggi, lebar = self._beku_tampil.shape[:2]
+        self.abu.siapkan((lebar, tinggi), np.random.default_rng(self.cfg["debu_seed"] + 1))
         self._siap = True
 
+    def _dasar(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Union removal zone (float 0..1) and plate view for one live frame."""
+        kunci = self._dasar_kunci
+        if kunci is not None and kunci[0] is frame and kunci[1] is self.matte.matte:
+            return self._dasar_hasil
+        known = self.bg.known()
+        matte_ok = self.matte.matte is not None and self.matte.matte.shape == frame.shape[:2]
+        with self._tahap("matte"):
+            orang = self.matte.core() if matte_ok else None
+        with self._tahap("background"):
+            # Exposure is matched only on known room pixels away from both the snapshot and the live person.
+            area = known & ~self._zona
+            if orang is not None:
+                area &= ~orang
+            adj = self.bg.plate_adj(frame, area)
+        zf = self._zf
+        if matte_ok:
+            with self._tahap("matte"):
+                zf_live, _ = self.matte.zone(frame, adj, known)
+                zf = np.maximum(zf, zf_live)
+        # A pixel of the room that was never seen keeps the live frame instead of a made up plate value.
+        seen = self.bg.count > 0
+        if self._terisi is not None:
+            seen |= self._terisi
+        zf = zf * seen
+        with self._tahap("background"):
+            pv = self.bg.plate_view(adj, zf)
+        self._dasar_kunci = (frame, self.matte.matte)
+        self._dasar_hasil = (zf, pv)
+        return zf, pv
+
     def _komposisi(self, t: float, frame_tampil: np.ndarray) -> np.ndarray:
-        tinggi, lebar = frame_tampil.shape[:2]
-        statis = t >= self.debu_akhir and t >= self.cfg["abu_selesai_detik"] and not self.cfg["latar_live"]
-        if statis and self._cache is not None and self._cache.shape == frame_tampil.shape:
-            return self._cache
-        if self.cfg["latar_live"]:
-            kecil = cv2.resize(frame_tampil, (self.lebar, self.tinggi), interpolation=cv2.INTER_AREA)
-            np.copyto(self._kanvas, kecil, casting="unsafe")
+        zf, pv = self._dasar(frame_tampil)
+        self._info_dasar = (zf, pv)
+        hasil = frame_tampil.copy()
+        # Base layer: live frame outside the zone, plate view inside, feathered at the edge.
+        x, y, w, h = cv2.boundingRect((zf > 0.0).view(np.uint8))
+        if w > 0 and h > 0:
+            kotak = (slice(y, y + h), slice(x, x + w))
+            bobot = np.ascontiguousarray(zf[kotak])
+            hasil[kotak] = cv2.blendLinear(frame_tampil[kotak], pv[kotak], 1.0 - bobot, bobot)
+        if t < self.debu_akhir:
+            self.debu.render(hasil, t, self.abu.specks(t))
+            self.butir_tampil = self.debu.visible
         else:
-            np.copyto(self._kanvas, self._plate_f)
-        t_debu = t - self.cfg["debu_mulai_detik"]
-        self.butir_tampil = self.debu.render(self._kanvas_datar, t_debu) if t < self.debu_akhir else 0
-        self.abu.render(self._kanvas_datar, t)
-        hasil = cv2.resize(cv2.convertScaleAbs(self._kanvas), (lebar, tinggi), interpolation=cv2.INTER_LINEAR)
-        if statis:
-            self._cache = hasil
+            self.butir_tampil = 0
         return hasil
 
     def info_kualitas(self, lebar: int, tinggi: int) -> Dict[str, Any]:
-        """Data for tools/measure_quality.py at display size; entries are None when not available."""
+        """Data for tools/measure_quality.py at display size; entries are None when not available.
+
+        zone is the part of the removal zone that is fully replaced by the plate view.
+        """
         info = {"zone": None, "plate_view": None, "mass": None, "step_px": None}  # type: Dict[str, Any]
-        if self._zona is not None:
-            info["zone"] = cv2.resize(self._zona.view(np.uint8) * np.uint8(255), (lebar, tinggi),
-                                      interpolation=cv2.INTER_NEAREST)
-        if self._plate_f is not None:
-            info["plate_view"] = cv2.resize(cv2.convertScaleAbs(self._plate_f), (lebar, tinggi),
-                                            interpolation=cv2.INTER_LINEAR)
+        if self._info_dasar is not None:
+            zf, pv = self._info_dasar
+            penuh = (zf >= 1.0).view(np.uint8) * np.uint8(255)
+            if penuh.shape != (tinggi, lebar):
+                penuh = cv2.resize(penuh, (lebar, tinggi), interpolation=cv2.INTER_NEAREST)
+                pv = cv2.resize(pv, (lebar, tinggi), interpolation=cv2.INTER_LINEAR)
+            info["zone"] = penuh
+            info["plate_view"] = pv
         if self._siap:
             effect_t = self.waktu_efek_terakhir
             active = self.cfg["debu_mulai_detik"] <= effect_t < self.debu_akhir
-            info["mass"] = self.debu.massa if active else (1.0 if effect_t < self.cfg["debu_mulai_detik"] else 0.0)
-            info["step_px"] = self.debu.langkah_maks * lebar / float(self.lebar) if active else 0.0
+            info["mass"] = self.debu.mass if active else (1.0 if effect_t < self.cfg["debu_mulai_detik"] else 0.0)
+            info["step_px"] = self.debu.step_max * lebar / float(self.debu.size[0]) if active else 0.0
         return info
 
     def render(self, now: float, frame_tampil: np.ndarray) -> np.ndarray:
@@ -555,6 +356,7 @@ class SnapController:
             return frame_tampil
         t = now - self.t0
         self.waktu_efek_terakhir = t
+        self._info_dasar = None
         if t >= self.kembali_akhir:
             self._masuk_live(now)
             return frame_tampil
@@ -574,7 +376,8 @@ class SnapController:
                 return np.full_like(frame_tampil, 255)
             hasil = self._komposisi(t, frame_tampil)
         if self.state == self.KEMBALI:
-            k = (t - self.kosong_akhir) / self.cfg["kembali_detik"]
+            # Outside the zone the base already equals the live frame, so only the person fades back in.
+            k = float(smoothstep((t - self.kosong_akhir) / self.cfg["kembali_detik"]))
             hasil = cv2.addWeighted(hasil, 1.0 - k, frame_tampil, k, 0.0)
         return self.flash.komposit(hasil, t)
 
@@ -1008,7 +811,7 @@ def buat_lembar_uji(path_gambar: str, path_bg: Optional[str], path_keluar: Optio
     if not cv2.imwrite(path_keluar, lembar):
         print("Gagal menyimpan: %s" % path_keluar)
         return 1
-    print("Lembar contoh disimpan ke %s (%d butir debu)" % (path_keluar, ctrl.debu.jumlah))
+    print("Lembar contoh disimpan ke %s (%d butir debu)" % (path_keluar, ctrl.debu.count))
     return 0
 
 

@@ -1,7 +1,10 @@
 """CONFIG for the SNAP effect and its validator. Every tunable number lives here."""
 
+import math
 import re
 from typing import Any, Dict, List
+
+import numpy as np
 
 CONFIG = {
     # kamera dan resolusi
@@ -44,7 +47,6 @@ CONFIG = {
     # background (manual capture countdown and frame count)
     "plate_hitung_mundur": 3,
     "plate_jumlah_frame": 30,
-    "latar_live": False,
 
     # background engine v2 (display resolution)
     "bg_safe_conf": 0.05,
@@ -122,8 +124,9 @@ CONFIG = {
     "debu_mulai_detik": 1.33,
     "debu_sapuan_detik": 1.8,
     "debu_umur_detik": 1.2,
-    "debu_ukuran_butir": 2,
-    "debu_ukuran_butir_turun": 3,
+    # One dust particle per cell of this many display pixels; the larger size is used when fps stays low.
+    "particle_cell_px": 4,
+    "debu_ukuran_butir_turun": 6,
     "debu_bobot_vertikal": 0.6,
     "debu_bobot_noise": 0.4,
     "debu_oktaf": (4, 8, 16, 32, 64),
@@ -134,19 +137,28 @@ CONFIG = {
     "debu_percepatan_naik": 0.04,
     "debu_jitter_min": 0.4,
     "debu_jitter_maks": 1.6,
-    "debu_goyang_px": 2.0,
+    "debu_goyang_px": 4.0,
     "debu_goyang_hz": 1.5,
     "debu_seed": 7,
     "debu_balik_horizontal": False,
+
+    # dissolve v2 (display resolution)
+    "edge_soft_s": 0.08,
+    "fine_noise_weight": 0.06,
+    "dust_blur": 0.6,
+    "dust_gain": 1.6,
+    "max_particle_step_px": 12,
 
     # abu melayang
     "abu_ambient": True,
     "abu_jumlah": 150,
     "abu_warna": "#B0B0B0",
     "abu_alpha": 0.6,
+    # Speck size in half resolution pixels.
     "abu_ukuran_maks": 2,
     "abu_kecepatan_relatif": 0.4,
-    "abu_selesai_detik": 5.0,
+    # Must end with the dust, so the zone shows only the room afterwards.
+    "abu_selesai_detik": 4.33,
 
     # linimasa
     "kosong_detik": 2.0,
@@ -166,27 +178,42 @@ CONFIG = {
 }
 
 MODE_TRIGGER = ("GESTUR", "SUARA", "ATAU", "DAN")
+# Frame rate at which motion limits such as max_particle_step_px are defined.
+REFERENCE_FPS = 30
 
-_KUNCI_BOOL = ("audio_aktif", "latar_live", "abu_ambient", "debu_balik_horizontal", "bg_noise_on",
+_KUNCI_BOOL = ("audio_aktif", "abu_ambient", "debu_balik_horizontal", "bg_noise_on",
                "allow_inpaint_fallback", "shadow_on")
 _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_maks", "proses_lebar",
               "proses_tinggi", "audio_blocksize", "audio_ring_blok", "audio_kalibrasi_jumlah",
               "plate_hitung_mundur", "plate_jumlah_frame", "mask_kernel",
-              "debu_ukuran_butir", "debu_ukuran_butir_turun", "debu_seed", "abu_jumlah",
+              "particle_cell_px", "debu_ukuran_butir_turun", "debu_seed", "abu_jumlah",
               "abu_ukuran_maks", "fps_target", "fps_batas_turun", "fps_jendela_frame", "uji_jumlah_frame",
               "profiler_window", "bg_safe_margin_px", "bg_safe_frames", "bg_median_step",
               "bg_known_samples", "bg_auto_capture_frames", "bg_moved_confirm", "bg_noise_tiles",
               "bg_noise_tile_px", "zone_dilate_px", "inpaint_pad_px", "matte_radius", "shadow_ring_px",
-              "shadow_close_px")
+              "shadow_close_px", "max_particle_step_px")
 _KUNCI_PECAHAN = ("bg_safe_conf", "bg_absent_frac", "bg_phase_min_response", "bg_moved_min_known",
                   "bg_coverage_min", "coverage_tint_alpha", "bg_gain_min_weight", "matte_eps", "matte_scale",
                   "matte_floor", "matte_on", "matte_keep", "shadow_ratio_max", "shadow_chroma_max",
                   "debug_alpha", "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
-                  "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks")
+                  "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks", "fine_noise_weight")
 _KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna")
 _KUNCI_TABEL = ("flash_naik_tabel", "flash_turun_tabel")
 _KUNCI_GRID = ("bg_moved_grid", "bg_gain_grid")
+
+
+def hex_ke_bgr(warna: str) -> np.ndarray:
+    return np.array([int(warna[5:7], 16), int(warna[3:5], 16), int(warna[1:3], 16)], dtype=np.float32)
+
+
+def particle_step_px(cfg: Dict[str, Any]) -> float:
+    """Upper bound of one particle's move per frame at REFERENCE_FPS on the camera frame size."""
+    life, jit = cfg["debu_umur_detik"], cfg["debu_jitter_maks"]
+    vx = (cfg["debu_angin_kiri"] + cfg["debu_percepatan_kiri"] * life) * cfg["kamera_lebar"] * jit
+    vy = ((cfg["debu_angin_naik"] + cfg["debu_percepatan_naik"] * life) * cfg["kamera_tinggi"] * jit
+          + 2.0 * math.pi * cfg["debu_goyang_hz"] * cfg["debu_goyang_px"])
+    return math.hypot(vx, vy) / REFERENCE_FPS
 
 
 def _angka(nilai: Any) -> bool:
@@ -272,9 +299,15 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
         salah.append("bg_median_step must be at most 255")
     if cfg["fps_batas_turun"] > cfg["fps_target"]:
         salah.append("fps_batas_turun tidak boleh lebih besar dari fps_target")
-    for k in ("debu_ukuran_butir", "debu_ukuran_butir_turun"):
-        if cfg[k] > cfg["proses_lebar"] // 8 or cfg[k] > cfg["proses_tinggi"] // 8:
-            salah.append("%s terlalu besar untuk resolusi proses" % k)
+    for k in ("particle_cell_px", "debu_ukuran_butir_turun"):
+        if not 2 <= cfg[k] <= 16:
+            salah.append("%s must be from 2 to 16 display pixels" % k)
+    dust_end = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
+    if cfg["abu_selesai_detik"] > dust_end + 1e-9:
+        salah.append("abu_selesai_detik must not be later than the end of the dust (%.2f s)" % dust_end)
+    if particle_step_px(cfg) > cfg["max_particle_step_px"]:
+        salah.append("wind settings move dust %.1f px per frame at %d fps (limit max_particle_step_px %d)" % (
+            particle_step_px(cfg), REFERENCE_FPS, cfg["max_particle_step_px"]))
     if cfg["mask_kernel"] % 2 == 0:
         salah.append("mask_kernel harus ganjil")
     if cfg["shadow_close_px"] % 2 == 0:

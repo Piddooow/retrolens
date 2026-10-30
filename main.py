@@ -400,13 +400,13 @@ class ModeSnap:
     def proses(self, now: float, frame, hasil_tangan, ts: int):
         """Frame akhir tanpa HUD. hasil_tangan None jika landmarker tidak dijalankan."""
         h, w = frame.shape[:2]
-        if self.ctrl.butuh_segmentasi():
-            with self.prof.stage("segmenter"):
-                kecil = cv2.resize(frame, (self.cfg["proses_lebar"], self.cfg["proses_tinggi"]),
-                                   interpolation=cv2.INTER_AREA)
-                mask = self.seg.perbarui(kecil, ts)
-            # Times its own matte and background stages.
-            self.ctrl.amati(now, frame, kecil, mask)
+        # Runs in every state: during the effect the live person is hidden too.
+        with self.prof.stage("segmenter"):
+            kecil = cv2.resize(frame, (self.cfg["proses_lebar"], self.cfg["proses_tinggi"]),
+                               interpolation=cv2.INTER_AREA)
+            mask = self.seg.perbarui(kecil, ts)
+        # Times its own matte and background stages.
+        self.ctrl.amati(now, frame, kecil, mask)
 
         self._cek_audio(now)
         audio_aktif = self.audio is not None and self.audio.aktif
@@ -476,7 +476,7 @@ class ModeSnap:
 
     def gambar_debug(self, img, now: float) -> None:
         h, w = img.shape[:2]
-        if self.seg.mask is not None and self.ctrl.butuh_segmentasi():
+        if self.seg.mask is not None:
             orang = (cv2.resize(self.seg.mask, (w, h), interpolation=cv2.INTER_LINEAR)
                      > self.cfg["mask_ambang"]).astype(np.uint8)
             hijau = cv2.addWeighted(img, 0.6, np.full_like(img, (0, 160, 0)), 0.4, 0.0)
@@ -514,8 +514,8 @@ class ModeSnap:
         alpha = self.cfg["debug_alpha"]
         matte = self.ctrl.matte.matte
         label = "Debug view: %s  (D for next)" % view
-        if not self.ctrl.butuh_segmentasi() or matte is None or matte.shape != (h, w):
-            tulis(img, label + "  -  shown only while live", (10, 60), 0.55)
+        if matte is None or matte.shape != (h, w):
+            tulis(img, label + "  -  waiting for the camera", (10, 60), 0.55)
             return
         if view == "matte":
             tumpuk(img, matte, (0, 200, 0), alpha)

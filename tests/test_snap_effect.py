@@ -53,7 +53,7 @@ class TesConfig(unittest.TestCase):
     def test_tolak_nilai_buruk(self):
         for kunci, nilai in (("flash_turun_detik", 0), ("debu_umur_detik", -1), ("mode_trigger", "X"),
                              ("abu_warna", "merah"), ("cubit_masuk", 0.9), ("mask_ambang", 1.5),
-                             ("flash_tunda_ujung_detik", 2.0), ("debu_ukuran_butir", 0)):
+                             ("flash_tunda_ujung_detik", 2.0), ("particle_cell_px", 0)):
             cfg = dict(CFG)
             cfg[kunci] = nilai
             self.assertTrue(se.validasi_config(cfg), kunci)
@@ -102,6 +102,23 @@ class TesFlash(unittest.TestCase):
         self.assertGreater(int(hasil[360, 640].sum()), 0)
         self.assertTrue(np.all(flash.komposit(frame, 0.5) == 255))
 
+    def test_komposit_sama_dengan_rumus_lama(self):
+        # The OpenCV blend must match frame x (1 - s) + flash color x s within rounding.
+        flash = se.FlashOverlay(CFG, PL, PT)
+        flash.mulai((0.3, 0.7))
+        rng = np.random.default_rng(3)
+        frame = rng.integers(0, 256, (720, 1280, 3), dtype=np.uint8)
+        for t in (0.1, 0.25, 1.5, 2.2, 3.0):
+            s = flash.kekuatan(t)
+            ke_putih = np.clip((s - CFG["flash_ambang_putih"]) / (1.0 - CFG["flash_ambang_putih"]), 0, 1)[..., None]
+            lapisan = (flash.warna_dasar * (1.0 - ke_putih) + 255.0 * ke_putih) * s[..., None]
+            lapisan = cv2.resize(lapisan, (1280, 720), interpolation=cv2.INTER_LINEAR)
+            sisa = cv2.resize(1.0 - s, (1280, 720), interpolation=cv2.INTER_LINEAR)
+            lama = np.clip(np.rint(frame * sisa[..., None] + lapisan), 0, 255)
+            beda = np.abs(flash.komposit(frame, t).astype(np.int16) - lama)
+            self.assertLessEqual(int(beda.max()), 2, "t=%.2f" % t)
+            self.assertLess(float(beda.mean()), 0.5, "t=%.2f" % t)
+
 
 class TesLinimasa(unittest.TestCase):
     def test_state_di_tiap_batas(self):
@@ -149,58 +166,6 @@ class TesLinimasa(unittest.TestCase):
         self.assertFalse(ctrl.picu(0.0))
         self.assertEqual(ctrl.pesan(0.1), "Tidak ada orang terdeteksi")
         self.assertEqual(ctrl.pesan(0.1 + CFG["pesan_detik"]), "")
-
-
-class TesDebu(unittest.TestCase):
-    def setUp(self):
-        frame, mask = frame_sintetis()
-        self.frame = frame
-        self.debu = se.Disintegration(CFG, PL, PT)
-        self.debu.siapkan(frame, mask > 0.5, CFG["debu_ukuran_butir"])
-
-    def test_jumlah_butir_masuk_akal(self):
-        self.assertGreater(self.debu.jumlah, 5000)
-
-    def test_kepala_lepas_lebih_dulu(self):
-        y = self.debu.y0
-        atas = self.debu.lepas[y < y.min() + 0.2 * (y.max() - y.min())]
-        bawah = self.debu.lepas[y > y.max() - 0.2 * (y.max() - y.min())]
-        self.assertLess(float(np.median(atas)), float(np.median(bawah)))
-
-    def test_ada_lubang_di_badan(self):
-        # Di tengah sapuan, sebagian butir bawah sudah lepas sementara butir di atasnya belum.
-        t = 0.5 * CFG["debu_sapuan_detik"]
-        y = self.debu.y0
-        tengah = (y > np.percentile(y, 55)) & (y < np.percentile(y, 75))
-        lepas = self.debu.lepas[tengah] < t
-        self.assertTrue(lepas.any() and not lepas.all())
-
-    def test_bergerak_ke_kiri_atas_lalu_hilang(self):
-        semua = np.arange(self.debu.jumlah)
-        umur = np.full(self.debu.jumlah, 0.6 * CFG["debu_umur_detik"], dtype=np.float32)
-        x, y = self.debu.posisi(semua, umur)
-        dx, dy = x - self.debu.x0, y - self.debu.y0
-        self.assertLess(float(dx.max()), 0.0)
-        self.assertLess(float(dy.mean()), 0.0)
-        # Jitter membuat debu menyebar, bukan bergerak sebagai satu blok.
-        self.assertGreater(float(dx.std()), 5.0)
-        kanvas = np.zeros((PT * PL, 3), dtype=np.float32)
-        akhir = CFG["debu_sapuan_detik"] + CFG["debu_umur_detik"]
-        self.assertEqual(self.debu.render(kanvas, akhir), 0)
-        self.assertTrue(self.debu.selesai(akhir))
-        self.assertEqual(float(kanvas.max()), 0.0)
-
-    def test_butir_belum_lepas_pakai_piksel_asli(self):
-        kanvas = np.zeros((PT * PL, 3), dtype=np.float32)
-        self.debu.render(kanvas, -1.0)
-        kanvas = kanvas.reshape(PT, PL, 3)
-        self.assertTrue(np.array_equal(kanvas[200, 320], self.frame[200, 320].astype(np.float32)))
-
-    def test_seed_bisa_diulang(self):
-        frame, mask = frame_sintetis()
-        lain = se.Disintegration(CFG, PL, PT)
-        lain.siapkan(frame, mask > 0.5, CFG["debu_ukuran_butir"])
-        self.assertTrue(np.array_equal(lain.lepas, self.debu.lepas))
 
 
 class TesMaskSnap(unittest.TestCase):
