@@ -20,6 +20,7 @@ PATH_KALIBRASI = os.path.join(FOLDER, "snap_kalibrasi.json")
 FOLDER_REKAMAN = os.path.join(FOLDER, "rekaman")
 BANTUAN_SNAP = "M mode, B background, S snap, T trigger, K kalibrasi, D debug, V rekam, R reset, Q keluar"
 BANTUAN_RETROLENS = "M mode SNAP, V rekam, Q keluar"
+WARNA_TINT = (235, 175, 90)
 PETUNJUK_TRIGGER = {
     "GESTUR": "Jentikkan jari (jempol + jari tengah) di depan kamera, atau tekan S",
     "SUARA": "Jentikkan jari sampai terdengar, atau tekan S",
@@ -395,7 +396,7 @@ class ModeSnap:
                                    interpolation=cv2.INTER_AREA)
                 mask = self.seg.perbarui(kecil, ts)
             with self.prof.stage("background"):
-                self.ctrl.amati(now, kecil, mask)
+                self.ctrl.amati(now, frame, kecil, mask)
 
         self._cek_audio(now)
         audio_aktif = self.audio is not None and self.audio.aktif
@@ -493,22 +494,28 @@ class ModeSnap:
         tahap = "ms (avg %d frames): %s  total %.1f" % (
             self.prof.window, "  ".join(self.prof.summary()), self.prof.total())
         tulis(img, tahap, (10, y + 10), skala_muat(tahap, w - 20, 0.5))
-        if self.ctrl.state not in (SnapController.LIVE, SnapController.HITUNG_MUNDUR):
+        if self.ctrl.state not in (SnapController.LIVE, SnapController.PLATE_CAPTURE):
             tulis(img, "t efek = %.2f s  butir %d  ukuran %d px" % (
                 self.ctrl.waktu_efek(now), self.ctrl.butir_tampil, self.ctrl.ukuran_butir), (10, y + 40), 0.5)
 
     def gambar_hud(self, img, now: float, fps: float) -> None:
         h, w = img.shape[:2]
+        tint = self.ctrl.tint(now)
+        if tint is not None and tint[0].shape == img.shape[:2]:
+            # Show which part of the room is still unknown after a refused snap.
+            mask = tint[0].view(np.uint8)
+            biru = cv2.addWeighted(img, 1.0 - tint[1], np.full_like(img, WARNA_TINT), tint[1], 0.0)
+            cv2.copyTo(biru, mask, img)
         if self.debug:
             self.gambar_debug(img, now)
         status = "Mode SNAP  |  State %s  |  Trigger %s  |  %s  |  %d FPS" % (
-            self.ctrl.state, self.mode_trigger, self.ctrl.bg.status, int(round(fps)))
+            self.ctrl.state, self.mode_trigger, self.ctrl.status_bg(), int(round(fps)))
         tulis(img, status, (10, 30), skala_muat(status, w - 120, 0.6), (0, 255, 255))
 
         tengah = ""
-        if self.ctrl.state == SnapController.HITUNG_MUNDUR:
+        if self.ctrl.state == SnapController.PLATE_CAPTURE:
             sisa = self.ctrl.sisa_hitung_mundur(now)
-            tengah = "Keluar dari frame: %d" % sisa if sisa > 0 else "Merekam background, tetap di luar frame..."
+            tengah = "Step out of the frame: %d" % sisa if sisa > 0 else "Learning the room, stay out of the frame..."
         elif self.audio is not None and self.audio.aktif and self.audio.sedang_kalibrasi():
             tengah = self.audio.teks_kalibrasi(now)
         if tengah:

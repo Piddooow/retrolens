@@ -14,13 +14,20 @@ PL, PT = CFG["proses_lebar"], CFG["proses_tinggi"]
 SATU_FRAME = 1.0 / 30
 
 
-def frame_sintetis():
-    """Background gradasi dan 'orang' (kepala + badan) bertekstur di tengah frame proses."""
+def latar_sintetis():
+    """Empty synthetic room: a color gradient."""
     yy, xx = np.mgrid[0:PT, 0:PL]
     frame = np.zeros((PT, PL, 3), dtype=np.uint8)
     frame[..., 0] = (xx * 255 // PL).astype(np.uint8)
     frame[..., 1] = 120
     frame[..., 2] = (yy * 255 // PT).astype(np.uint8)
+    return frame
+
+
+def frame_sintetis():
+    """Background gradasi dan 'orang' (kepala + badan) bertekstur di tengah frame proses."""
+    yy, xx = np.mgrid[0:PT, 0:PL]
+    frame = latar_sintetis()
     kepala = (xx - 320) ** 2 + (yy - 110) ** 2 < 45 ** 2
     badan = (abs(xx - 320) < 90) & (yy > 150)
     orang = kepala | badan
@@ -33,7 +40,9 @@ def frame_sintetis():
 def controller_siap(cfg=CFG):
     frame, mask = frame_sintetis()
     ctrl = se.SnapController(cfg)
-    ctrl.amati(0.0, frame, mask)
+    # The coverage gate needs a known room behind the person.
+    ctrl.bg.set_plate(latar_sintetis())
+    ctrl.amati(0.0, frame, frame, mask)
     return ctrl, frame, mask
 
 
@@ -129,13 +138,14 @@ class TesLinimasa(unittest.TestCase):
         ctrl.reset(1.0)
         self.assertEqual(ctrl.state, "LIVE")
         self.assertFalse(ctrl.picu(1.0 + CFG["cooldown_detik"] - 0.01))
-        ctrl.amati(2.5, *frame_sintetis())
+        frame, mask = frame_sintetis()
+        ctrl.amati(2.5, frame, frame, mask)
         self.assertTrue(ctrl.picu(1.0 + CFG["cooldown_detik"] + 0.01))
 
     def test_batal_tanpa_orang(self):
         ctrl = se.SnapController(CFG)
         frame, _ = frame_sintetis()
-        ctrl.amati(0.0, frame, np.zeros((PT, PL), dtype=np.float32))
+        ctrl.amati(0.0, frame, frame, np.zeros((PT, PL), dtype=np.float32))
         self.assertFalse(ctrl.picu(0.0))
         self.assertEqual(ctrl.pesan(0.1), "Tidak ada orang terdeteksi")
         self.assertEqual(ctrl.pesan(0.1 + CFG["pesan_detik"]), "")
@@ -191,68 +201,6 @@ class TesDebu(unittest.TestCase):
         lain = se.Disintegration(CFG, PL, PT)
         lain.siapkan(frame, mask > 0.5, CFG["debu_ukuran_butir"])
         self.assertTrue(np.array_equal(lain.lepas, self.debu.lepas))
-
-
-class TesBackground(unittest.TestCase):
-    def test_plate_berjalan_dan_inpaint(self):
-        frame, mask = frame_sintetis()
-        bg = se.BackgroundModel(CFG, PL, PT)
-        bg.perbarui(frame, mask)
-        self.assertFalse(bg.terlihat[200, 320])
-        self.assertTrue(bg.terlihat[10, 10])
-        plate, lengkap, dibuang = bg.plate_untuk_snap(frame, mask)
-        self.assertFalse(lengkap)
-        self.assertFalse(dibuang)
-        self.assertEqual(plate.dtype, np.uint8)
-        self.assertTrue(bg.status.startswith("BG OTOMATIS"))
-
-    def test_manual_ditolak_jika_ada_orang(self):
-        frame, mask = frame_sintetis()
-        bg = se.BackgroundModel(CFG, PL, PT)
-        bg.mulai_manual()
-        hasil = None
-        for _ in range(CFG["plate_jumlah_frame"]):
-            hasil = bg.tambah_manual(frame, mask)
-        self.assertEqual(hasil, se.BackgroundModel.ADA_ORANG)
-        self.assertTrue(bg.status.startswith("BG OTOMATIS"))
-
-    def test_manual_diterima_dan_eksposur_dibatasi(self):
-        frame, mask = frame_sintetis()
-        bg = se.BackgroundModel(CFG, PL, PT)
-        bg.mulai_manual()
-        kosong = np.zeros((PT, PL), dtype=np.float32)
-        for i in range(CFG["plate_jumlah_frame"]):
-            hasil = bg.tambah_manual(frame, kosong)
-            self.assertEqual(hasil, None if i < CFG["plate_jumlah_frame"] - 1 else se.BackgroundModel.OK)
-        self.assertEqual(bg.status, "BG TERSIMPAN")
-        terang = cv2.convertScaleAbs(frame, alpha=1.15)
-        plate, lengkap, dibuang = bg.plate_untuk_snap(terang, mask)
-        self.assertTrue(lengkap)
-        self.assertFalse(dibuang)
-        rasio = plate[10:50, 10:50].astype(np.float32).mean() / frame[10:50, 10:50].astype(np.float32).mean()
-        self.assertAlmostEqual(rasio, 1.15, delta=0.02)
-
-    def test_manual_dibuang_jika_kamera_bergeser(self):
-        frame, mask = frame_sintetis()
-        bg = se.BackgroundModel(CFG, PL, PT)
-        bg.set_manual(frame)
-        geser = np.ascontiguousarray(np.roll(frame, 40, axis=1)[:, :, ::-1])
-        plate, lengkap, dibuang = bg.plate_untuk_snap(geser, mask)
-        self.assertTrue(dibuang)
-        self.assertIsNone(bg.manual)
-
-    def test_manual_ditolak_jika_kamera_tertutup(self):
-        frame, mask = frame_sintetis()
-        bg = se.BackgroundModel(CFG, PL, PT)
-        bg.perbarui(frame, mask)
-        tertutup = np.full_like(frame, (40, 60, 150))
-        kosong = np.zeros((PT, PL), dtype=np.float32)
-        bg.mulai_manual()
-        hasil = None
-        for _ in range(CFG["plate_jumlah_frame"]):
-            hasil = bg.tambah_manual(tertutup, kosong)
-        self.assertEqual(hasil, se.BackgroundModel.TIDAK_COCOK)
-        self.assertIsNone(bg.manual)
 
 
 class TesMaskSnap(unittest.TestCase):

@@ -21,228 +21,16 @@ try:
 except Exception:  # PortAudio tidak terpasang: mode suara dimatikan, sisanya tetap jalan.
     sd = None
 
-CONFIG = {
-    # kamera dan resolusi
-    "kamera_indeks": 0,
-    "kamera_lebar": 1280,
-    "kamera_tinggi": 720,
-    "kamera_gagal_maks": 30,
-    "proses_lebar": 640,
-    "proses_tinggi": 360,
+from snap.background import CAPTURE_MESSAGES, CAPTURE_OK, BackgroundEngine, dilate_to  # noqa: E402,F401
+from snap.config import CONFIG, MODE_TRIGGER, validasi_config  # noqa: E402,F401
 
-    # gesture (disetel dari rekaman jentikan asli: rasio_cubit saat lepas 0.55 sampai 0.69,
-    # rasio_tengah turun 40 sampai 50% dari nilai tertinggi selama SIAP)
-    "cubit_masuk": 0.35,
-    "cubit_tahan_detik": 0.20,
-    "cubit_lepas": 0.45,
-    "lepas_maks_detik": 0.12,
-    "tengah_turun_min": 0.30,
-    "tangan_cocok_maks": 0.25,
-    "siap_maks_detik": 1.5,
-    "toleransi_hilang_detik": 0.15,
-
-    # suara (AWAL, utamakan hasil kalibrasi)
-    "audio_aktif": True,
-    "audio_blocksize": 512,
-    "audio_highpass_hz": 1500,
-    "audio_onset_kali": 6.0,
-    "audio_jendela_noise_detik": 2.0,
-    "audio_dan_jendela_detik": 0.25,
-    "audio_ambang_awal_kali_noise": 20.0,
-    "audio_ring_blok": 64,
-    "audio_diam_detik": 2.0,
-    "audio_putus_detik": 1.0,
-    "audio_kalibrasi_hening_detik": 2.0,
-    "audio_kalibrasi_jentik_detik": 6.0,
-    "audio_kalibrasi_jumlah": 3,
-    "audio_kalibrasi_jarak_detik": 0.3,
-    "mode_trigger": "GESTUR",
-    "cooldown_detik": 1.0,
-
-    # background
-    "plate_bobot_baru": 0.1,
-    "plate_ambang_bg": 0.2,
-    "plate_hitung_mundur": 3,
-    "plate_jumlah_frame": 30,
-    "plate_maks_orang": 0.005,
-    "plate_ambang_orang": 0.5,
-    "plate_inpaint_radius": 5,
-    "plate_tepi_px": 4,
-    "plate_beda_maks": 16.0,
-    "plate_cocok_min": 0.05,
-    "eksposur_min": 0.8,
-    "eksposur_maks": 1.25,
-    "latar_live": False,
-
-    # segmentasi
-    "mask_ema_baru": 0.6,
-    "mask_ambang": 0.5,
-    "mask_kernel": 3,
-    "mask_luas_min_komponen": 0.005,
-    "mask_luas_min_orang": 0.01,
-
-    # flash (terukur dari reference)
-    "flash_naik_detik": 0.33,
-    "flash_naik_tabel": ((0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
-                         (0.0, 0.14, 0.33, 0.57, 0.85, 1.0)),
-    "flash_tahan_detik": 1.0,
-    "flash_turun_detik": 1.8,
-    "flash_turun_tabel": ((0.0, 0.111, 0.222, 0.333, 0.444, 0.556, 0.667, 0.778, 0.889, 1.0),
-                          (1.0, 0.966, 0.912, 0.828, 0.71, 0.559, 0.412, 0.265, 0.118, 0.0)),
-    "flash_tunda_ujung_detik": 0.07,
-    "flash_warna_dekat": "#647AB7",
-    "flash_warna_jauh": "#857A94",
-    "flash_asal_cadangan": (0.10, 0.90),
-    "flash_ambang_putih": 0.5,
-
-    # debu (terukur dan teruji di prototipe)
-    "debu_mulai_detik": 1.33,
-    "debu_sapuan_detik": 1.8,
-    "debu_umur_detik": 1.2,
-    "debu_ukuran_butir": 2,
-    "debu_ukuran_butir_turun": 3,
-    "debu_bobot_vertikal": 0.6,
-    "debu_bobot_noise": 0.4,
-    "debu_oktaf": (4, 8, 16, 32, 64),
-    "debu_amplitudo_oktaf": 0.55,
-    "debu_angin_kiri": 0.08,
-    "debu_angin_naik": 0.03,
-    "debu_percepatan_kiri": 0.06,
-    "debu_percepatan_naik": 0.04,
-    "debu_jitter_min": 0.4,
-    "debu_jitter_maks": 1.6,
-    "debu_goyang_px": 2.0,
-    "debu_goyang_hz": 1.5,
-    "debu_seed": 7,
-    "debu_balik_horizontal": False,
-
-    # abu melayang
-    "abu_ambient": True,
-    "abu_jumlah": 150,
-    "abu_warna": "#B0B0B0",
-    "abu_alpha": 0.6,
-    "abu_ukuran_maks": 2,
-    "abu_kecepatan_relatif": 0.4,
-    "abu_selesai_detik": 5.0,
-
-    # linimasa
-    "kosong_detik": 2.0,
-    "kembali_detik": 0.5,
-    "pesan_detik": 1.5,
-
-    # performa
-    "fps_target": 24,
-    "fps_batas_turun": 20,
-    "fps_jendela_frame": 30,
-    "fps_turun_detik": 2.0,
-    "profiler_window": 60,
-
-    # lembar uji (--uji)
-    "uji_jumlah_frame": 9,
-    "uji_selang_detik": 0.4,
-}
-
-MODE_TRIGGER = ("GESTUR", "SUARA", "ATAU", "DAN")
-
-_KUNCI_BOOL = ("audio_aktif", "latar_live", "abu_ambient", "debu_balik_horizontal")
-_KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_maks", "proses_lebar",
-              "proses_tinggi", "audio_blocksize", "audio_ring_blok", "audio_kalibrasi_jumlah",
-              "plate_hitung_mundur", "plate_jumlah_frame", "plate_inpaint_radius", "plate_tepi_px", "mask_kernel",
-              "debu_ukuran_butir", "debu_ukuran_butir_turun", "debu_seed", "abu_jumlah",
-              "abu_ukuran_maks", "fps_target", "fps_batas_turun", "fps_jendela_frame", "uji_jumlah_frame",
-              "profiler_window")
-_KUNCI_PECAHAN = ("plate_bobot_baru", "plate_ambang_bg", "plate_maks_orang", "plate_ambang_orang", "plate_cocok_min",
-                  "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
-                  "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
-                  "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks")
-_KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna")
-_KUNCI_TABEL = ("flash_naik_tabel", "flash_turun_tabel")
+MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds, then snap again"
+MSG_ESTIMATED = "Background estimated, result may not be perfect"
 
 
-def _angka(nilai: Any) -> bool:
-    return isinstance(nilai, (int, float)) and not isinstance(nilai, bool)
-
-
-def validasi_config(cfg: Dict[str, Any]) -> List[str]:
-    """Kembalikan daftar kesalahan CONFIG; kosong berarti aman dipakai."""
-    salah = []  # type: List[str]
-    hilang = [k for k in CONFIG if k not in cfg]
-    if hilang:
-        return ["kunci hilang: " + ", ".join(hilang)]
-
-    for k in _KUNCI_BOOL:
-        if not isinstance(cfg[k], bool):
-            salah.append("%s harus True atau False" % k)
-    for k in _KUNCI_INT:
-        if not isinstance(cfg[k], int) or isinstance(cfg[k], bool):
-            salah.append("%s harus bilangan bulat" % k)
-    for k, v in cfg.items():
-        if k in _KUNCI_BOOL or k in _KUNCI_WARNA or k in _KUNCI_TABEL or k == "mode_trigger":
-            continue
-        if k in ("debu_oktaf", "flash_asal_cadangan"):
-            continue
-        if not _angka(v):
-            salah.append("%s harus angka" % k)
-        elif k == "kamera_indeks" or k == "debu_seed":
-            if v < 0:
-                salah.append("%s tidak boleh negatif" % k)
-        elif v <= 0:
-            salah.append("%s harus lebih dari 0 (sekarang %r)" % (k, v))
-    for k in _KUNCI_PECAHAN:
-        if _angka(cfg[k]) and not 0 < cfg[k] <= 1:
-            salah.append("%s harus di antara 0 dan 1" % k)
-    for k in _KUNCI_WARNA:
-        if not isinstance(cfg[k], str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", cfg[k]):
-            salah.append("%s harus warna hex seperti #A1B2C3" % k)
-    for k in _KUNCI_TABEL:
-        tabel = cfg[k]
-        try:
-            xs, ys = tabel
-            xs = [float(x) for x in xs]
-            ys = [float(y) for y in ys]
-        except (TypeError, ValueError):
-            salah.append("%s harus berisi dua deret angka" % k)
-            continue
-        if len(xs) != len(ys) or len(xs) < 2:
-            salah.append("%s: panjang deret x dan y harus sama dan minimal 2" % k)
-        elif xs[0] != 0.0 or xs[-1] != 1.0 or any(b <= a for a, b in zip(xs, xs[1:])):
-            salah.append("%s: deret x harus naik dari 0 sampai 1" % k)
-        elif any(not 0.0 <= y <= 1.0 for y in ys):
-            salah.append("%s: deret y harus di antara 0 dan 1" % k)
-
-    if cfg["mode_trigger"] not in MODE_TRIGGER:
-        salah.append("mode_trigger harus salah satu dari " + ", ".join(MODE_TRIGGER))
-    oktaf = cfg["debu_oktaf"]
-    if (not isinstance(oktaf, (tuple, list)) or not oktaf
-            or any(not isinstance(o, int) or isinstance(o, bool) or o < 1 for o in oktaf)):
-        salah.append("debu_oktaf harus deret bilangan bulat positif")
-    asal = cfg["flash_asal_cadangan"]
-    if (not isinstance(asal, (tuple, list)) or len(asal) != 2
-            or any(not _angka(a) or not 0 <= a <= 1 for a in asal)):
-        salah.append("flash_asal_cadangan harus (x, y) dengan nilai 0 sampai 1")
-    # Pemeriksaan silang hanya aman jika semua tipe sudah benar.
-    if salah:
-        return salah
-
-    if cfg["cubit_masuk"] >= cfg["cubit_lepas"]:
-        salah.append("cubit_masuk harus lebih kecil dari cubit_lepas")
-    if cfg["debu_jitter_min"] > cfg["debu_jitter_maks"]:
-        salah.append("debu_jitter_min tidak boleh lebih besar dari debu_jitter_maks")
-    if not cfg["eksposur_min"] <= 1.0 <= cfg["eksposur_maks"]:
-        salah.append("eksposur_min harus <= 1 dan eksposur_maks harus >= 1")
-    if cfg["fps_batas_turun"] > cfg["fps_target"]:
-        salah.append("fps_batas_turun tidak boleh lebih besar dari fps_target")
-    for k in ("debu_ukuran_butir", "debu_ukuran_butir_turun"):
-        if cfg[k] > cfg["proses_lebar"] // 8 or cfg[k] > cfg["proses_tinggi"] // 8:
-            salah.append("%s terlalu besar untuk resolusi proses" % k)
-    if cfg["mask_kernel"] % 2 == 0:
-        salah.append("mask_kernel harus ganjil")
-    # Pergantian ke frame beku harus terjadi saat seluruh layar sudah putih penuh.
-    if cfg["flash_tunda_ujung_detik"] >= cfg["flash_tahan_detik"]:
-        salah.append("flash_tunda_ujung_detik harus lebih kecil dari flash_tahan_detik")
-    if cfg["debu_mulai_detik"] < cfg["flash_naik_detik"] + cfg["flash_tunda_ujung_detik"]:
-        salah.append("debu_mulai_detik tidak boleh sebelum layar putih penuh")
-    return salah
+def smoothstep(x: float) -> float:
+    x = min(1.0, max(0.0, x))
+    return x * x * (3.0 - 2.0 * x)
 
 
 
@@ -331,110 +119,6 @@ class PersonSegmenter:
 
     def close(self) -> None:
         self._seg.close()
-
-
-class BackgroundModel:
-    """Plate berjalan otomatis dan clean plate manual, keduanya di resolusi proses."""
-
-    OK = "ok"
-    ADA_ORANG = "ada_orang"
-    TIDAK_COCOK = "tidak_cocok"
-
-    def __init__(self, cfg: Dict[str, Any], lebar: int, tinggi: int):
-        self.cfg = cfg
-        self.lebar, self.tinggi = lebar, tinggi
-        self.plate = None  # type: Optional[np.ndarray]
-        self.manual = None  # type: Optional[np.ndarray]
-        self.terlihat = np.zeros((tinggi, lebar), dtype=bool)
-        self._jumlah = None  # type: Optional[np.ndarray]
-        self._n = 0
-        self._ada_orang = False
-
-    @property
-    def status(self) -> str:
-        if self.manual is not None:
-            return "BG TERSIMPAN"
-        return "BG OTOMATIS %d%%" % int(round(100.0 * float(self.terlihat.mean())))
-
-    def _sesuaikan(self, frame: np.ndarray, plate: np.ndarray, area: np.ndarray) -> Tuple[np.ndarray, float]:
-        """Rasio eksposur per kanal plate terhadap frame, dan beda rata-rata setelah dikoreksi."""
-        if not area.any():
-            return np.ones(3, dtype=np.float32), 0.0
-        f = frame[area].astype(np.float32)
-        p = plate[area].astype(np.float32)
-        rasio = np.clip(f.mean(axis=0) / np.maximum(p.mean(axis=0), 1.0),
-                        self.cfg["eksposur_min"], self.cfg["eksposur_maks"]).astype(np.float32)
-        return rasio, float(np.abs(f - p * rasio).mean())
-
-    def perbarui(self, frame: np.ndarray, conf: np.ndarray) -> None:
-        f = frame.astype(np.float32)
-        bg = conf < self.cfg["plate_ambang_bg"]
-        if self.plate is None:
-            self.plate = f.copy()
-        # Piksel yang baru pertama kali terlihat langsung diambil utuh, sisanya dirata-rata pelan.
-        bobot = np.where(self.terlihat, np.float32(self.cfg["plate_bobot_baru"]), np.float32(1.0))
-        bobot[~bg] = 0.0
-        self.plate += (f - self.plate) * bobot[..., None]
-        self.terlihat |= bg
-
-    def set_manual(self, frame: np.ndarray) -> None:
-        self.manual = frame.astype(np.float32)
-
-    def mulai_manual(self) -> None:
-        self._jumlah = np.zeros((self.tinggi, self.lebar, 3), dtype=np.float64)
-        self._n = 0
-        self._ada_orang = False
-
-    def tambah_manual(self, frame: np.ndarray, conf: np.ndarray) -> Optional[str]:
-        """None selama masih merekam, lalu OK, ADA_ORANG, atau TIDAK_COCOK."""
-        if self._jumlah is None:
-            return self.ADA_ORANG
-        if float((conf > self.cfg["plate_ambang_orang"]).mean()) > self.cfg["plate_maks_orang"]:
-            self._ada_orang = True
-        self._jumlah += frame
-        self._n += 1
-        if self._n < self.cfg["plate_jumlah_frame"]:
-            return None
-        rata = (self._jumlah / self._n).astype(np.float32)
-        self._jumlah = None
-        if self._ada_orang:
-            return self.ADA_ORANG
-        # Kamera tertutup atau bergeser terlihat dari area yang sudah dikenal plate otomatis.
-        if self.plate is not None and self.terlihat.mean() >= self.cfg["plate_cocok_min"]:
-            _, beda = self._sesuaikan(self.plate, rata, self.terlihat)
-            if beda > self.cfg["plate_beda_maks"]:
-                return self.TIDAK_COCOK
-        self.set_manual(rata)
-        return self.OK
-
-    def plate_untuk_snap(self, frame: np.ndarray, conf: np.ndarray) -> Tuple[np.ndarray, bool, bool]:
-        """Plate uint8 terkoreksi eksposur, apakah lengkap tanpa inpaint, dan apakah plate manual dibuang."""
-        bg_live = conf < self.cfg["plate_ambang_bg"]
-        dibuang = False
-        if self.manual is not None:
-            rasio, beda = self._sesuaikan(frame, self.manual, bg_live)
-            if beda <= self.cfg["plate_beda_maks"]:
-                return cv2.convertScaleAbs(self.manual * rasio), True, False
-            # Kamera bergeser sejak plate direkam; plate manual tidak bisa dipakai lagi.
-            self.manual = None
-            dibuang = True
-
-        if self.plate is not None:
-            dasar = self.plate
-            terlihat = self.terlihat
-        else:
-            dasar = frame.astype(np.float32)
-            terlihat = bg_live
-        rasio, _ = self._sesuaikan(frame, dasar, terlihat & bg_live)
-        hasil = cv2.convertScaleAbs(dasar * rasio)
-        kurang = (~terlihat).astype(np.uint8)
-        if not kurang.any():
-            return hasil, True, dibuang
-        # Tepi diperlebar supaya warna rambut dan baju di batas siluet tidak ikut dipakai inpaint.
-        tepi = 2 * self.cfg["plate_tepi_px"] + 1
-        kurang = cv2.dilate(kurang, np.ones((tepi, tepi), dtype=np.uint8))
-        hasil = cv2.inpaint(hasil, kurang * 255, self.cfg["plate_inpaint_radius"], cv2.INPAINT_TELEA)
-        return hasil, False, dibuang
 
 
 class FlashOverlay:
@@ -643,7 +327,7 @@ class SnapController:
     """State machine SNAP. Semua waktu (now) berupa detik monotonic yang diberikan pemanggil."""
 
     LIVE = "LIVE"
-    HITUNG_MUNDUR = "HITUNG_MUNDUR"
+    PLATE_CAPTURE = "PLATE_CAPTURE"
     SNAP = "SNAP"
     KOSONG = "KOSONG"
     KEMBALI = "KEMBALI"
@@ -652,7 +336,9 @@ class SnapController:
         self.cfg = cfg
         lebar, tinggi = cfg["proses_lebar"], cfg["proses_tinggi"]
         self.lebar, self.tinggi = lebar, tinggi
-        self.bg = BackgroundModel(cfg, lebar, tinggi)
+        self.bg = BackgroundEngine(cfg)
+        self.bg_siap = False
+        self.bg_persen = 0
         self.flash = FlashOverlay(cfg, lebar, tinggi)
         self.debu = Disintegration(cfg, lebar, tinggi)
         self.abu = AshAmbient(cfg, lebar, tinggi)
@@ -672,18 +358,22 @@ class SnapController:
         self._pesan = ""
         self._pesan_sampai = -math.inf
         self._frame = None  # type: Optional[np.ndarray]
+        self._frame_tampil = None  # type: Optional[np.ndarray]
         self._mask = None  # type: Optional[np.ndarray]
+        self._tint = None  # type: Optional[np.ndarray]
+        self._tint_t = -math.inf
         self._kanvas = np.zeros((tinggi, lebar, 3), dtype=np.float32)
         self._kanvas_datar = self._kanvas.reshape(-1, 3)
         self._kosongkan_snapshot()
 
     def _kosongkan_snapshot(self) -> None:
         self._beku = None  # type: Optional[np.ndarray]
+        self._beku_tampil = None  # type: Optional[np.ndarray]
+        self._zona = None  # type: Optional[np.ndarray]
+        self._perkiraan = False
         self._biner = None  # type: Optional[np.ndarray]
         self._conf_beku = None  # type: Optional[np.ndarray]
         self._plate_f = None  # type: Optional[np.ndarray]
-        self._bg_lengkap = True
-        self._bg_dibuang = False
         self._siap = False
         self._cache = None  # type: Optional[np.ndarray]
 
@@ -698,7 +388,7 @@ class SnapController:
         return now - self.t0 if self.state in (self.SNAP, self.KOSONG, self.KEMBALI) else 0.0
 
     def butuh_segmentasi(self) -> bool:
-        return self.state in (self.LIVE, self.HITUNG_MUNDUR)
+        return self.state in (self.LIVE, self.PLATE_CAPTURE)
 
     def siap_dipicu(self, now: float) -> bool:
         return self.state == self.LIVE and now >= self.cooldown_sampai
@@ -706,29 +396,52 @@ class SnapController:
     def sisa_hitung_mundur(self, now: float) -> int:
         return max(0, int(math.ceil(self.t_rekam - now)))
 
-    def amati(self, now: float, frame_proses: np.ndarray, mask: np.ndarray) -> None:
-        """Masukkan frame resolusi proses dan mask orang terbaru (hanya saat LIVE atau HITUNG_MUNDUR)."""
+    def _zona_orang(self, mask: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
+        return dilate_to(mask > self.cfg["mask_ambang"], self.cfg["zone_dilate_px"], size)
+
+    def amati(self, now: float, frame_tampil: np.ndarray, frame_proses: np.ndarray, mask: np.ndarray) -> None:
+        """Latest display frame, its process size copy, and the person mask (LIVE or PLATE_CAPTURE only)."""
+        self._frame_tampil = frame_tampil
         self._frame = frame_proses
         self._mask = mask
         if self.state == self.LIVE:
-            self.bg.perbarui(frame_proses, mask)
-        elif self.state == self.HITUNG_MUNDUR and now >= self.t_rekam:
-            hasil = self.bg.tambah_manual(frame_proses, mask)
-            if hasil is None:
-                return
-            self.set_pesan({
-                BackgroundModel.OK: "Background tersimpan",
-                BackgroundModel.ADA_ORANG: "Masih ada orang di frame, tekan B lagi",
-                BackgroundModel.TIDAK_COCOK: "Background tidak cocok. Keluar dari frame tanpa menutup kamera, tekan B lagi",
-            }[hasil], now, self.cfg["pesan_detik"] * 2)
-            self._masuk_live(now)
+            for teks in self.bg.update(now, frame_tampil, mask):
+                self.set_pesan(teks, now, self.cfg["pesan_detik"] * 2)
+        elif self.state == self.PLATE_CAPTURE:
+            if now < self.t_rekam:
+                self.bg.update(now, frame_tampil, mask, allow_auto=False)
+            else:
+                hasil = self.bg.capture_frame(frame_tampil, mask)
+                if hasil is not None:
+                    self.set_pesan(CAPTURE_MESSAGES[hasil], now, self.cfg["pesan_detik"] * 2)
+                    self._masuk_live(now)
+        h, w = frame_tampil.shape[:2]
+        zona = self._zona_orang(mask, (w, h))
+        cakupan = self.bg.coverage(zona) if zona.any() else self.bg.known_fraction()
+        self.bg_siap = cakupan >= self.cfg["bg_coverage_min"]
+        self.bg_persen = int(math.floor(100.0 * cakupan))
+
+    def status_bg(self) -> str:
+        return "BG READY" if self.bg_siap else "BG LEARNING %d%%" % self.bg_persen
+
+    def tint(self, now: float) -> Optional[Tuple[np.ndarray, float]]:
+        """Soft blue overlay on the unknown background after a refused snap: (mask, opacity) or None."""
+        if self._tint is None:
+            return None
+        hold = self.cfg["pesan_detik"]
+        fade = self.cfg["coverage_tint_fade_s"]
+        alpha = self.cfg["coverage_tint_alpha"] * (1.0 - smoothstep((now - self._tint_t - hold) / fade))
+        if alpha <= 0.0:
+            self._tint = None
+            return None
+        return self._tint, alpha
 
     def mulai_rekam_plate(self, now: float) -> None:
         if self.state != self.LIVE:
             return
-        self.state = self.HITUNG_MUNDUR
+        self.state = self.PLATE_CAPTURE
         self.t_rekam = now + self.cfg["plate_hitung_mundur"]
-        self.bg.mulai_manual()
+        self.bg.cancel_capture()
 
     def picu(self, now: float, asal: Optional[Tuple[float, float]] = None) -> bool:
         """Mulai efek dari frame dan mask terakhir. asal = titik jentik ternormalisasi 0..1."""
@@ -741,9 +454,21 @@ class SnapController:
         if luas < self.cfg["mask_luas_min_orang"]:
             self.set_pesan("Tidak ada orang terdeteksi", now)
             return False
+        h, w = self._frame_tampil.shape[:2]
+        zona = self._zona_orang(self._mask, (w, h))
+        # Coverage gate: never vanish over background that was not seen.
+        perkiraan = self.bg.coverage(zona) < self.cfg["bg_coverage_min"]
+        if perkiraan and not self.cfg["allow_inpaint_fallback"]:
+            self.set_pesan(MSG_NEED_ROOM, now, self.cfg["pesan_detik"] * 2)
+            self._tint = zona & ~self.bg.known()
+            self._tint_t = now
+            return False
         self._kosongkan_snapshot()
         # Snapshot dibekukan di sini; mask live tidak dipakai lagi selama efek.
         self._beku = self._frame.copy()
+        self._beku_tampil = self._frame_tampil.copy()
+        self._zona = zona
+        self._perkiraan = perkiraan
         self._biner = biner
         self._conf_beku = self._mask.copy()
         self.flash.mulai(asal if asal is not None else tuple(self.cfg["flash_asal_cadangan"]))
@@ -762,8 +487,10 @@ class SnapController:
 
     def _siapkan(self) -> None:
         """Dipanggil sekali saat layar putih penuh, jadi jeda persiapan tidak terlihat."""
-        plate, self._bg_lengkap, self._bg_dibuang = self.bg.plate_untuk_snap(self._beku, self._conf_beku)
-        self._plate_f = plate.astype(np.float32)
+        plate = self.bg.plate_adj(self._beku_tampil)
+        if self._perkiraan:
+            plate = self.bg.fill_unknown(plate, self._zona)
+        self._plate_f = cv2.resize(plate, (self.lebar, self.tinggi), interpolation=cv2.INTER_AREA).astype(np.float32)
         self.debu.siapkan(self._beku, self._biner, self.ukuran_butir)
         self.abu.siapkan(np.random.default_rng(self.cfg["debu_seed"] + 1))
         self._siap = True
@@ -804,7 +531,7 @@ class SnapController:
 
     def render(self, now: float, frame_tampil: np.ndarray) -> np.ndarray:
         """Frame akhir (uint8, resolusi tampilan) tanpa teks HUD."""
-        if self.state in (self.LIVE, self.HITUNG_MUNDUR):
+        if self.state in (self.LIVE, self.PLATE_CAPTURE):
             return frame_tampil
         t = now - self.t0
         self.waktu_efek_terakhir = t
@@ -815,12 +542,8 @@ class SnapController:
             self.state = self.KEMBALI
         elif t >= self.debu_akhir and self.state == self.SNAP:
             self.state = self.KOSONG
-            if self._bg_dibuang:
-                self.set_pesan("Kamera bergeser sejak background direkam, tekan B untuk rekam ulang", now,
-                               self.cfg["kosong_detik"])
-            elif not self._bg_lengkap:
-                self.set_pesan("Background belum lengkap, tekan B untuk hasil terbaik", now,
-                               self.cfg["kosong_detik"])
+            if self._perkiraan:
+                self.set_pesan(MSG_ESTIMATED, now, self.cfg["kosong_detik"])
 
         if t < self.t_ganti:
             hasil = frame_tampil
@@ -1219,6 +942,10 @@ def buat_lembar_uji(path_gambar: str, path_bg: Optional[str], path_keluar: Optio
         return 1
 
     ukuran_proses = (cfg["proses_lebar"], cfg["proses_tinggi"])
+    if not path_bg:
+        # One photo never shows the room behind the person, so the preview estimates it.
+        print("No --bg given: the background behind the person is estimated (FSR inpainting).")
+        cfg = dict(cfg, allow_inpaint_fallback=True)
     ctrl = SnapController(cfg)
     seg = PersonSegmenter(path_seg, cfg)
     try:
@@ -1231,10 +958,14 @@ def buat_lembar_uji(path_gambar: str, path_bg: Optional[str], path_keluar: Optio
         if bg is None:
             print("Gambar background tidak bisa dibaca: %s" % path_bg)
             return 1
-        ctrl.bg.set_manual(cv2.resize(bg, ukuran_proses, interpolation=cv2.INTER_AREA))
-    ctrl.amati(0.0, kecil, mask)
-    if not ctrl.picu(0.0):
-        print(ctrl.pesan(0.0))
+        ctrl.bg.set_plate(cv2.resize(bg, (gambar.shape[1], gambar.shape[0]), interpolation=cv2.INTER_AREA))
+    # Show the still photo long enough for every visible background pixel to become known.
+    langkah = cfg["bg_known_samples"] + cfg["bg_safe_frames"] + 1
+    for i in range(langkah):
+        ctrl.amati(i / 30.0, gambar, kecil, mask)
+    t0 = langkah / 30.0
+    if not ctrl.picu(t0):
+        print(ctrl.pesan(t0))
         return 1
 
     tinggi, lebar = gambar.shape[:2]
@@ -1244,7 +975,7 @@ def buat_lembar_uji(path_gambar: str, path_bg: Optional[str], path_keluar: Optio
     lembar = np.zeros((ubin_t * baris, ubin_l * kolom, 3), dtype=np.uint8)
     for i in range(cfg["uji_jumlah_frame"]):
         t = i * cfg["uji_selang_detik"]
-        ubin = cv2.resize(ctrl.render(t, gambar), (ubin_l, ubin_t), interpolation=cv2.INTER_AREA)
+        ubin = cv2.resize(ctrl.render(t0 + t, gambar), (ubin_l, ubin_t), interpolation=cv2.INTER_AREA)
         teks = "t = %.1f s  %s" % (t, ctrl.state)
         cv2.putText(ubin, teks, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(ubin, teks, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
