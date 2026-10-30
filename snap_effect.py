@@ -135,6 +135,7 @@ CONFIG = {
     "fps_batas_turun": 20,
     "fps_jendela_frame": 30,
     "fps_turun_detik": 2.0,
+    "profiler_window": 60,
 
     # lembar uji (--uji)
     "uji_jumlah_frame": 9,
@@ -148,7 +149,8 @@ _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_ma
               "proses_tinggi", "audio_blocksize", "audio_ring_blok", "audio_kalibrasi_jumlah",
               "plate_hitung_mundur", "plate_jumlah_frame", "plate_inpaint_radius", "plate_tepi_px", "mask_kernel",
               "debu_ukuran_butir", "debu_ukuran_butir_turun", "debu_seed", "abu_jumlah",
-              "abu_ukuran_maks", "fps_target", "fps_batas_turun", "fps_jendela_frame", "uji_jumlah_frame")
+              "abu_ukuran_maks", "fps_target", "fps_batas_turun", "fps_jendela_frame", "uji_jumlah_frame",
+              "profiler_window")
 _KUNCI_PECAHAN = ("plate_bobot_baru", "plate_ambang_bg", "plate_maks_orang", "plate_ambang_orang", "plate_cocok_min",
                   "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
@@ -495,6 +497,10 @@ class Disintegration:
         self._offset = np.zeros(1, dtype=np.int64)
         self._idx0 = np.zeros(0, dtype=np.int64)
         self.lepas = np.zeros(0, dtype=np.float32)
+        # Quality metrics: visible mass relative to the start, and the largest particle move (process px).
+        self.massa = 0.0
+        self.langkah_maks = 0.0
+        self._xy_lalu = np.zeros((0, 2), dtype=np.float32)
 
     def siapkan(self, beku: np.ndarray, mask: np.ndarray, ukuran: int) -> None:
         cfg = self.cfg
@@ -513,6 +519,9 @@ class Disintegration:
         self._idx0 = (iy * s).astype(np.int64) * self.lebar + (ix * s).astype(np.int64)
         self.warna = warna_grid[iy, ix].astype(np.float32)
         self._beku = beku.reshape(-1, 3).astype(np.float32)
+        self.massa = 1.0
+        self.langkah_maks = 0.0
+        self._xy_lalu = np.stack([self.x0, self.y0], axis=1)
         if self.jumlah == 0:
             self.lepas = np.zeros(0, dtype=np.float32)
             return
@@ -538,16 +547,24 @@ class Disintegration:
         dy += cfg["debu_goyang_px"] * (np.sin(2.0 * math.pi * cfg["debu_goyang_hz"] * at + fase) - np.sin(fase))
         return self.x0[pilih] + dx, self.y0[pilih] + dy
 
+    def _catat_metrik(self, xy: np.ndarray, massa_butir: float) -> None:
+        self.massa = massa_butir / max(1, self.jumlah)
+        both = ~np.isnan(xy[:, 0]) & ~np.isnan(self._xy_lalu[:, 0])
+        self.langkah_maks = float(np.hypot(*(xy[both] - self._xy_lalu[both]).T).max()) if both.any() else 0.0
+        self._xy_lalu = xy
+
     def selesai(self, t_debu: float) -> bool:
         return self.jumlah == 0 or t_debu >= float(self.lepas.max()) + self.cfg["debu_umur_detik"]
 
     def render(self, kanvas: np.ndarray, t_debu: float) -> int:
         """Gambar butir ke kanvas float32 (tinggi*lebar, 3); kembalikan jumlah butir yang tampil."""
         if self.jumlah == 0:
+            self.massa = 0.0
             return 0
         cfg = self.cfg
         umur = cfg["debu_umur_detik"]
         a = np.float32(t_debu) - self.lepas
+        xy = np.full((self.jumlah, 2), np.nan, dtype=np.float32)
 
         # Butir yang belum lepas memakai piksel asli frame beku, jadi badan tetap tajam.
         belum = a <= 0
@@ -557,11 +574,16 @@ class Disintegration:
                 idx = dasar + off
                 kanvas[idx] = self._beku[idx]
 
+        xy[belum, 0] = self.x0[belum]
+        xy[belum, 1] = self.y0[belum]
         terbang = np.nonzero((a > 0) & (a < umur))[0]
         if len(terbang) == 0:
+            self._catat_metrik(xy, float(belum.sum()))
             return int(belum.sum())
         at = a[terbang]
         xf, yf = self.posisi(terbang, at)
+        xy[terbang, 0] = xf
+        xy[terbang, 1] = yf
 
         s = self.ukuran
         x = np.rint(xf).astype(np.int64)
@@ -569,6 +591,7 @@ class Disintegration:
         di_layar = (x >= 0) & (x <= self.lebar - s) & (y >= 0) & (y <= self.tinggi - s)
         x, y = x[di_layar], y[di_layar]
         alpha = (1.0 - at[di_layar] / umur)[:, None]
+        self._catat_metrik(xy, float(belum.sum()) + float(alpha.sum()))
         warna_a = self.warna[terbang[di_layar]] * alpha
         sisa = 1.0 - alpha
         dasar = y * self.lebar + x
@@ -645,6 +668,7 @@ class SnapController:
         self.cooldown_sampai = -math.inf
         self.t_rekam = 0.0
         self.butir_tampil = 0
+        self.waktu_efek_terakhir = 0.0
         self._pesan = ""
         self._pesan_sampai = -math.inf
         self._frame = None  # type: Optional[np.ndarray]
@@ -762,11 +786,28 @@ class SnapController:
             self._cache = hasil
         return hasil
 
+    def info_kualitas(self, lebar: int, tinggi: int) -> Dict[str, Any]:
+        """Data for tools/measure_quality.py at display size; entries are None when not available."""
+        info = {"zone": None, "plate_view": None, "mass": None, "step_px": None}  # type: Dict[str, Any]
+        if self._biner is not None:
+            info["zone"] = cv2.resize(self._biner.astype(np.uint8) * 255, (lebar, tinggi),
+                                      interpolation=cv2.INTER_NEAREST)
+        if self._plate_f is not None:
+            info["plate_view"] = cv2.resize(cv2.convertScaleAbs(self._plate_f), (lebar, tinggi),
+                                            interpolation=cv2.INTER_LINEAR)
+        if self._siap:
+            effect_t = self.waktu_efek_terakhir
+            active = self.cfg["debu_mulai_detik"] <= effect_t < self.debu_akhir
+            info["mass"] = self.debu.massa if active else (1.0 if effect_t < self.cfg["debu_mulai_detik"] else 0.0)
+            info["step_px"] = self.debu.langkah_maks * lebar / float(self.lebar) if active else 0.0
+        return info
+
     def render(self, now: float, frame_tampil: np.ndarray) -> np.ndarray:
         """Frame akhir (uint8, resolusi tampilan) tanpa teks HUD."""
         if self.state in (self.LIVE, self.HITUNG_MUNDUR):
             return frame_tampil
         t = now - self.t0
+        self.waktu_efek_terakhir = t
         if t >= self.kembali_akhir:
             self._masuk_live(now)
             return frame_tampil
