@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+rekaman/
+uji_lokal/
+snap_kalibrasi.json
