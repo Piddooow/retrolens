@@ -28,6 +28,7 @@ from snap.ash import AshAmbient  # noqa: E402
 from snap.config import hex_ke_bgr  # noqa: E402,F401
 from snap.dissolve import DissolveRenderer, noise_fraktal, normalisasi, smoothstep  # noqa: E402,F401
 from snap.flash import FlashOverlay, kurva_flash  # noqa: E402,F401
+from snap.gestures import SnapGestureDetector  # noqa: E402,F401
 from snap.matte import MatteEngine  # noqa: E402
 
 MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds, then snap again"
@@ -380,109 +381,6 @@ class SnapController:
             k = float(smoothstep((t - self.kosong_akhir) / self.cfg["kembali_detik"]))
             hasil = cv2.addWeighted(hasil, 1.0 - k, frame_tampil, k, 0.0)
         return self.flash.komposit(hasil, t)
-
-
-class SnapGestureDetector:
-    """Deteksi jentikan dari landmark: cubit jempol ke jari tengah, lalu lepas cepat sambil jari tengah turun."""
-
-    DIAM = "DIAM"
-    SIAP = "SIAP"
-
-    def __init__(self, cfg: Dict[str, Any]):
-        self.cfg = cfg
-        self.tangan = []  # type: List[Dict[str, Any]]
-
-    def reset(self) -> None:
-        self.tangan = []
-
-    @staticmethod
-    def rasio(lm: np.ndarray) -> Tuple[float, float]:
-        """(rasio_cubit, rasio_tengah), keduanya dibagi jarak pergelangan ke pangkal jari tengah."""
-        skala = max(float(np.linalg.norm(lm[0] - lm[9])), 1e-6)
-        return float(np.linalg.norm(lm[4] - lm[12])) / skala, float(np.linalg.norm(lm[12] - lm[0])) / skala
-
-    def _jejak_baru(self, lm: np.ndarray) -> Dict[str, Any]:
-        return {"state": self.DIAM, "lm": lm, "c": 0.0, "m": 0.0, "t_cubit": None, "t_siap": 0.0,
-                "m_ref": 0.0, "titik": (0.0, 0.0), "t_buka": None, "t_hilang": None, "perlu_buka": False,
-                "t_jentik": -math.inf}
-
-    def _cocokkan(self, daftar: List[np.ndarray], lebar: int) -> Dict[int, int]:
-        """Pasangkan tangan baru ke jejak lama lewat pergelangan terdekat; urutan dari MediaPipe bisa tertukar."""
-        pasangan = sorted((float(np.linalg.norm(jejak["lm"][0] - lm[0])), i, j)
-                          for i, jejak in enumerate(self.tangan) for j, lm in enumerate(daftar))
-        hasil = {}  # type: Dict[int, int]
-        dipakai = set()
-        for jarak, i, j in pasangan:
-            if j in hasil or i in dipakai or jarak > self.cfg["tangan_cocok_maks"] * lebar:
-                continue
-            hasil[j] = i
-            dipakai.add(i)
-        return hasil
-
-    def perbarui(self, now: float, daftar: List[np.ndarray], lebar: int,
-                 tinggi: int) -> List[Tuple[float, Tuple[float, float]]]:
-        """daftar berisi landmark (21, 2) piksel per tangan. Kembalikan event (waktu, titik jentik 0..1)."""
-        cfg = self.cfg
-        event = []  # type: List[Tuple[float, Tuple[float, float]]]
-        cocok = self._cocokkan(daftar, lebar)
-        lama = self.tangan
-        baru = []  # type: List[Dict[str, Any]]
-
-        for i, jejak in enumerate(lama):
-            if i in cocok.values():
-                continue
-            if jejak["t_hilang"] is None:
-                jejak["t_hilang"] = now
-            if now - jejak["t_hilang"] <= cfg["toleransi_hilang_detik"]:
-                baru.append(jejak)
-
-        for j, lm in enumerate(daftar):
-            jejak = lama[cocok[j]] if j in cocok else self._jejak_baru(lm)
-            c, m = self.rasio(lm)
-            jejak["lm"], jejak["c"], jejak["m"] = lm, c, m
-            titik = (float(lm[4][0] + lm[12][0]) / 2.0 / lebar, float(lm[4][1] + lm[12][1]) / 2.0 / tinggi)
-            baru.append(jejak)
-
-            if jejak["t_hilang"] is not None:
-                hilang = now - jejak["t_hilang"]
-                jejak["t_hilang"] = None
-                # Lepasan jentik sering kabur sehingga tangan hilang sebentar dari deteksi.
-                if jejak["state"] == self.SIAP and hilang <= cfg["toleransi_hilang_detik"] and c > cfg["cubit_lepas"]:
-                    event.append((now, jejak["titik"]))
-                    self._ke_diam(jejak, now, jentik=True)
-                    continue
-
-            if jejak["state"] == self.DIAM:
-                if c >= cfg["cubit_masuk"]:
-                    jejak["t_cubit"] = None
-                    jejak["perlu_buka"] = False
-                elif not jejak["perlu_buka"]:
-                    if jejak["t_cubit"] is None:
-                        jejak["t_cubit"] = now
-                    if now - jejak["t_cubit"] >= cfg["cubit_tahan_detik"]:
-                        jejak.update(state=self.SIAP, t_siap=now, m_ref=m, titik=titik, t_buka=None)
-            elif c < cfg["cubit_masuk"]:
-                jejak.update(t_buka=None, m_ref=max(jejak["m_ref"], m), titik=titik)
-                if now - jejak["t_siap"] > cfg["siap_maks_detik"]:
-                    # Harus membuka tangan dulu sebelum bisa SIAP lagi.
-                    self._ke_diam(jejak, now)
-                    jejak["perlu_buka"] = True
-            else:
-                if jejak["t_buka"] is None:
-                    jejak["t_buka"] = now
-                if now - jejak["t_buka"] > cfg["lepas_maks_detik"]:
-                    self._ke_diam(jejak, now)
-                elif c > cfg["cubit_lepas"] and m <= jejak["m_ref"] * (1.0 - cfg["tengah_turun_min"]):
-                    event.append((now, jejak["titik"]))
-                    self._ke_diam(jejak, now, jentik=True)
-
-        self.tangan = baru
-        return event
-
-    def _ke_diam(self, jejak: Dict[str, Any], now: float, jentik: bool = False) -> None:
-        jejak.update(state=self.DIAM, t_cubit=None, t_buka=None)
-        if jentik:
-            jejak["t_jentik"] = now
 
 
 class OnsetAudio:

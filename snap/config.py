@@ -26,6 +26,26 @@ CONFIG = {
     "siap_maks_detik": 1.5,
     "toleransi_hilang_detik": 0.15,
 
+    # hold gestures (MediaPipe GestureRecognizer, model file next to main.py)
+    "gesture_model": "gesture_recognizer.task",
+    "hold_min_score": 0.7,
+    "hold_agree_frac": 0.8,
+    "hold_gap_max_s": 0.15,
+    "hold_release_s": 0.3,
+    "gesture_cooldown_s": 0.6,
+    "hold_thumb_up_s": 1.0,
+    "hold_thumb_down_s": 1.0,
+    # The snap release looks like a fist for under 0.2 s, so a fist only counts after this long.
+    "hold_fist_min_s": 0.25,
+
+    # hold progress ring
+    "ring_radius_px": 28,
+    "ring_pulse_px": 34,
+    "ring_stroke_px": 3,
+    "ring_alpha": 0.85,
+    "ring_pulse_s": 0.15,
+    "hud_fade_s": 0.2,
+
     # suara (AWAL, utamakan hasil kalibrasi)
     "audio_aktif": True,
     "audio_blocksize": 512,
@@ -191,13 +211,14 @@ _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_ma
               "profiler_window", "bg_safe_margin_px", "bg_safe_frames", "bg_median_step",
               "bg_known_samples", "bg_auto_capture_frames", "bg_moved_confirm", "bg_noise_tiles",
               "bg_noise_tile_px", "zone_dilate_px", "inpaint_pad_px", "matte_radius", "shadow_ring_px",
-              "shadow_close_px", "max_particle_step_px")
+              "shadow_close_px", "max_particle_step_px", "ring_radius_px", "ring_pulse_px", "ring_stroke_px")
 _KUNCI_PECAHAN = ("bg_safe_conf", "bg_absent_frac", "bg_phase_min_response", "bg_moved_min_known",
                   "bg_coverage_min", "coverage_tint_alpha", "bg_gain_min_weight", "matte_eps", "matte_scale",
                   "matte_floor", "matte_on", "matte_keep", "shadow_ratio_max", "shadow_chroma_max",
                   "debug_alpha", "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
-                  "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks", "fine_noise_weight")
+                  "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks", "fine_noise_weight",
+                  "hold_min_score", "hold_agree_frac", "ring_alpha")
 _KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna")
 _KUNCI_TABEL = ("flash_naik_tabel", "flash_turun_tabel")
 _KUNCI_GRID = ("bg_moved_grid", "bg_gain_grid")
@@ -234,7 +255,7 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
         if not isinstance(cfg[k], int) or isinstance(cfg[k], bool):
             salah.append("%s harus bilangan bulat" % k)
     for k, v in cfg.items():
-        if k in _KUNCI_BOOL or k in _KUNCI_WARNA or k in _KUNCI_TABEL or k == "mode_trigger":
+        if k in _KUNCI_BOOL or k in _KUNCI_WARNA or k in _KUNCI_TABEL or k in ("mode_trigger", "gesture_model"):
             continue
         if k in ("debu_oktaf", "flash_asal_cadangan") or k in _KUNCI_GRID:
             continue
@@ -267,6 +288,8 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
         elif any(not 0.0 <= y <= 1.0 for y in ys):
             salah.append("%s: deret y harus di antara 0 dan 1" % k)
 
+    if not isinstance(cfg["gesture_model"], str) or not cfg["gesture_model"].endswith(".task"):
+        salah.append("gesture_model must be a .task file name")
     if cfg["mode_trigger"] not in MODE_TRIGGER:
         salah.append("mode_trigger harus salah satu dari " + ", ".join(MODE_TRIGGER))
     oktaf = cfg["debu_oktaf"]
@@ -310,6 +333,8 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
             particle_step_px(cfg), REFERENCE_FPS, cfg["max_particle_step_px"]))
     if cfg["mask_kernel"] % 2 == 0:
         salah.append("mask_kernel harus ganjil")
+    if cfg["ring_pulse_px"] <= cfg["ring_radius_px"]:
+        salah.append("ring_pulse_px must be larger than ring_radius_px")
     if cfg["shadow_close_px"] % 2 == 0:
         salah.append("shadow_close_px must be odd")
     if not cfg["matte_floor"] < cfg["matte_keep"] < cfg["matte_on"]:

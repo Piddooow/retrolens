@@ -54,6 +54,14 @@ Aplikasi ini membutuhkan dua file model dari MediaPipe yang seharusnya sudah ada
 
 Jika file tersebut belum ada, pastikan untuk meletakkannya di dalam folder yang sama dengan file `main.py`.
 
+**Gesture model (one time download).** Hold gestures such as thumbs up (learn the room) and thumbs down (cancel) need `gesture_recognizer.task` next to `main.py`. It is not in the repository. Download it once:
+
+```bash
+curl -L -o gesture_recognizer.task https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task
+```
+
+If that link ever fails, get the file from the Models section of the official MediaPipe Gesture Recognizer page. Without it the app still runs, and only the snap gesture works.
+
 ### 5. Jalankan Aplikasi
 Jalankan script utamanya dengan mengetik:
 ```bash

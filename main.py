@@ -10,6 +10,8 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
+from snap import hud
+from snap.gestures import HoldGestureDetector
 from snap.profiler import Profiler
 from snap_effect import (CONFIG, MODE_TRIGGER, AudioSnapDetector, PemicuGabungan, PersonSegmenter,
                          SnapController, SnapGestureDetector, validasi_config)
@@ -23,6 +25,13 @@ BANTUAN_RETROLENS = "M mode SNAP, V rekam, Q keluar"
 WARNA_TINT = (235, 175, 90)
 # The D key cycles through these views.
 DEBUG_VIEWS = ("off", "stats", "matte", "zone", "coverage", "gain")
+# Hold gestures with an action so far: label -> (CONFIG key of the hold time, states where it acts).
+# Thumb_Down cancels anything that is not LIVE already.
+HOLD_GESTUR = {
+    "Thumb_Up": ("hold_thumb_up_s", (SnapController.LIVE,)),
+    "Thumb_Down": ("hold_thumb_down_s", (SnapController.PLATE_CAPTURE, SnapController.SNAP,
+                                         SnapController.KOSONG, SnapController.KEMBALI)),
+}
 PETUNJUK_TRIGGER = {
     "GESTUR": "Jentikkan jari (jempol + jari tengah) di depan kamera, atau tekan S",
     "SUARA": "Jentikkan jari sampai terdengar, atau tekan S",
@@ -30,7 +39,11 @@ PETUNJUK_TRIGGER = {
     "DAN": "Jentikkan jari: gerakan dan bunyi harus terdeteksi, atau tekan S",
 }
 
+MSG_GESTURE_MISSING = "Gesture model missing, only snap works. See README"
+
 BaseOptions = mp.tasks.BaseOptions
+GestureRecognizer = mp.tasks.vision.GestureRecognizer
+GestureRecognizerOptions = mp.tasks.vision.GestureRecognizerOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
 HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
@@ -328,7 +341,9 @@ class PerekamVideo:
 class ModeSnap:
     """Lem antara kamera, detektor, dan SnapController, plus HUD dan overlay debug."""
 
-    def __init__(self, cfg: Dict[str, Any], segmenter: PersonSegmenter, profiler: Profiler):
+    def __init__(self, cfg: Dict[str, Any], segmenter: PersonSegmenter, profiler: Profiler,
+                 hold_aktif: bool = False, catatan_gestur: str = ""):
+        """hold_aktif: the hand model is a GestureRecognizer; catatan_gestur: shown when SNAP mode opens."""
         self.cfg = cfg
         self.seg = segmenter
         self.ctrl = SnapController(cfg)
@@ -342,13 +357,28 @@ class ModeSnap:
         self.state_lalu = SnapController.LIVE
         self.prof = profiler
         self.t_fps_rendah = None  # type: Optional[float]
+        self.hold_aktif = hold_aktif
+        self.catatan_gestur = catatan_gestur
+        self.tahan = HoldGestureDetector(cfg)
+        self._tangan = []  # type: List[Tuple[np.ndarray, str, float, bool]]
+        self._cincin = []  # type: List[Tuple[Tuple[float, float], float]]
+        self._denyut = None  # type: Optional[Tuple[float, Tuple[float, float]]]
+
+    def _holds(self) -> Dict[str, float]:
+        """Hold gestures that have an action in the current state: label -> hold seconds."""
+        if not self.hold_aktif:
+            return {}
+        return {label: self.cfg[kunci] for label, (kunci, states) in HOLD_GESTUR.items()
+                if self.ctrl.state in states}
 
     def butuh_tangan(self) -> bool:
-        return self.ctrl.state == SnapController.LIVE
+        return self.ctrl.state == SnapController.LIVE or bool(self._holds())
 
     def masuk(self, now: float) -> None:
         self.ctrl.reset(now)
         self._mulai_ulang_input()
+        if self.catatan_gestur:
+            self.ctrl.set_pesan(self.catatan_gestur, now, self.cfg["pesan_detik"] * 3)
         if self.mode_trigger != "GESTUR" and not self._pastikan_audio(now):
             self.mode_trigger = "GESTUR"
 
@@ -364,6 +394,7 @@ class ModeSnap:
         self.pemicu.reset()
         self.seg.reset()
         self.ctrl.matte.reset()
+        self.tahan.reset()
 
     def _pastikan_audio(self, now: float) -> bool:
         if self.audio is not None and self.audio.aktif:
@@ -396,6 +427,28 @@ class ModeSnap:
     def _picu(self, now: float, asal: Optional[Tuple[float, float]]) -> None:
         if self.ctrl.picu(now, asal):
             self.pemicu.reset()
+            self.tahan.cooldown(now)
+
+    def _aksi_tahan(self, label: str, pusat: Tuple[float, float], now: float) -> None:
+        self._denyut = (now, pusat)
+        if label == "Thumb_Up":
+            self.ctrl.mulai_rekam_plate(now)
+        elif label == "Thumb_Down":
+            # Back in LIVE, proses resets the inputs like after any effect.
+            self.ctrl.reset(now)
+            self.ctrl.set_pesan("Cancelled", now)
+
+    def _perbarui_tahan(self, now: float, daftar: List[np.ndarray], hasil_tangan, lebar: int) -> None:
+        tangan = []  # type: List[Tuple[np.ndarray, str, float, bool]]
+        for lm, kategori in zip(daftar, hasil_tangan.gestures):
+            label, skor = (kategori[0].category_name, float(kategori[0].score)) if kategori else ("None", 0.0)
+            # Hold gestures are ignored on a hand that is about to snap.
+            siap = any(j["lm"] is lm and j["state"] == SnapGestureDetector.SIAP for j in self.gestur.tangan)
+            tangan.append((lm, label, skor, siap))
+        self._tangan = tangan
+        for label, pusat in self.tahan.update(now, tangan, self._holds(), {}, lebar):
+            self._aksi_tahan(label, pusat, now)
+        self._cincin = self.tahan.progress()
 
     def proses(self, now: float, frame, hasil_tangan, ts: int):
         """Frame akhir tanpa HUD. hasil_tangan None jika landmarker tidak dijalankan."""
@@ -415,10 +468,13 @@ class ModeSnap:
             for pesan in self.audio.ambil_pesan():
                 self.ctrl.set_pesan(pesan, now, self.cfg["pesan_detik"] * 2)
         gestur = []  # type: List[Tuple[float, Tuple[float, float]]]
+        self._tangan, self._cincin = [], []
         if hasil_tangan is not None:
             daftar = [np.array([(p.x * w, p.y * h) for p in tangan], dtype=np.float32)
                       for tangan in hasil_tangan.hand_landmarks]
             gestur = self.gestur.perbarui(now, daftar, w, h)
+            if self.hold_aktif:
+                self._perbarui_tahan(now, daftar, hasil_tangan, w)
         kalibrasi = audio_aktif and self.audio.sedang_kalibrasi()
         if not kalibrasi and self.ctrl.siap_dipicu(now):
             dipicu, asal = self.pemicu.periksa(now, self.mode_trigger, gestur, suara)
@@ -490,6 +546,9 @@ class ModeSnap:
                 teks = "cubit %.2f  tengah %.2f  %s" % (jejak["c"], jejak["m"], "JENTIK" if jentik else jejak["state"])
                 tulis(img, teks, (int(lm[0][0]) - 120, min(h - 70, int(lm[0][1]) + 30)), 0.55,
                       (0, 255, 0) if jejak["state"] == SnapGestureDetector.SIAP or jentik else (255, 255, 255))
+        for lm, label, skor, siap in self._tangan:
+            teks = "%s %.2f%s" % (label, skor, "  (snap ready)" if siap else "")
+            tulis(img, teks, (int(lm[0][0]) - 120, min(h - 48, int(lm[0][1]) + 54)), 0.55, (255, 220, 120))
         y = 90
         if self.audio is not None and self.audio.aktif:
             level, ambang = self.audio.level, max(self.audio.ambang, 1e-12)
@@ -571,6 +630,10 @@ class ModeSnap:
             else:
                 tulis_bawah(img, PETUNJUK_TRIGGER[self.mode_trigger], 2)
         tulis_bawah(img, BANTUAN_SNAP, 1, (200, 200, 200))
+        for pusat, bagian in self._cincin:
+            hud.cincin_tahan(img, pusat, bagian, self.cfg)
+        if self._denyut is not None and not hud.denyut(img, self._denyut[1], now - self._denyut[0], self.cfg):
+            self._denyut = None
 
 
 def path_model(nama: str) -> Optional[str]:
@@ -579,6 +642,33 @@ def path_model(nama: str) -> Optional[str]:
         print("File model '%s' tidak ditemukan. Lokasi yang diharapkan: %s" % (nama, path))
         return None
     return path
+
+
+def buka_model_tangan(cfg) -> Tuple[Any, Any, bool, str]:
+    """One hand model for both modes: (model, detect function, hold gestures available, note for the user).
+
+    GestureRecognizer when its file is next to main.py, otherwise HandLandmarker without hold gestures.
+    The model is never downloaded here. model is None when neither file can be used.
+    """
+    path = os.path.join(FOLDER, cfg["gesture_model"])
+    if os.path.isfile(path):
+        try:
+            model = GestureRecognizer.create_from_options(GestureRecognizerOptions(
+                base_options=BaseOptions(model_asset_path=path), running_mode=VisionRunningMode.VIDEO,
+                num_hands=2, min_hand_detection_confidence=0.7, min_hand_presence_confidence=0.7,
+                min_tracking_confidence=0.7))
+            return model, model.recognize_for_video, True, ""
+        except Exception as e:
+            print("Gesture model %s could not be loaded: %s" % (path, e))
+    path_tangan = path_model('hand_landmarker.task')
+    if path_tangan is None:
+        return None, None, False, ""
+    model = HandLandmarker.create_from_options(HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=path_tangan), running_mode=VisionRunningMode.VIDEO,
+        num_hands=2, min_hand_detection_confidence=0.7, min_hand_presence_confidence=0.7,
+        min_tracking_confidence=0.7))
+    print(MSG_GESTURE_MISSING)
+    return model, model.detect_for_video, False, MSG_GESTURE_MISSING
 
 
 def buka_kamera(cfg) -> Tuple[Optional[cv2.VideoCapture], int]:
@@ -620,10 +710,6 @@ def main() -> int:
             print("  -", s)
         return 1
 
-    path_tangan = path_model('hand_landmarker.task')
-    if path_tangan is None:
-        return 1
-
     cap = None
     landmarker = None
     segmenter = None
@@ -631,21 +717,15 @@ def main() -> int:
     perekam = PerekamVideo()
     profiler = Profiler(CONFIG["profiler_window"])
     try:
-        options = HandLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=path_tangan),
-            running_mode=VisionRunningMode.VIDEO,
-            num_hands=2,
-            min_hand_detection_confidence=0.7,
-            min_hand_presence_confidence=0.7,
-            min_tracking_confidence=0.7
-        )
-        landmarker = HandLandmarker.create_from_options(options)
+        landmarker, deteksi_tangan, hold_aktif, catatan_gestur = buka_model_tangan(CONFIG)
+        if landmarker is None:
+            return 1
 
         path_seg = path_model('selfie_segmenter.tflite')
         if path_seg is not None:
             try:
                 segmenter = PersonSegmenter(path_seg, CONFIG)
-                snap = ModeSnap(CONFIG, segmenter, profiler)
+                snap = ModeSnap(CONFIG, segmenter, profiler, hold_aktif, catatan_gestur)
             except Exception as e:
                 print("Segmenter tidak tersedia:", e)
 
@@ -714,7 +794,7 @@ def main() -> int:
                 with profiler.stage("hand"):
                     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-                    results = landmarker.detect_for_video(mp_image, ts)
+                    results = deteksi_tangan(mp_image, ts)
 
             if mode == "RETROLENS":
                 mask_person = None
