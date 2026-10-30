@@ -137,6 +137,7 @@ class HoldGestureDetector:
         self.held = set()  # type: Set[str]
         self._now = 0.0
         self._holds = {}  # type: Dict[str, float]
+        self._id_berikut = 0
         self._cooldown_sampai = -math.inf
         # Labels that fired: the time they were last seen gone, or None while still visible.
         self._diblok = {}  # type: Dict[str, Optional[float]]
@@ -183,8 +184,9 @@ class HoldGestureDetector:
             if j in cocok:
                 jejak = self.tangan[cocok[j]]
             else:
-                jejak = {"label": None, "t0": 0.0, "last": 0.0,
+                jejak = {"id": self._id_berikut, "label": None, "t0": 0.0, "last": 0.0,
                          "frames": collections.deque()}  # type: Dict[str, Any]
+                self._id_berikut += 1
             jejak["lm"], jejak["t_hilang"] = lm, None
             baru.append(jejak)
             dicari = label in holds or label in continuous
@@ -220,11 +222,11 @@ class HoldGestureDetector:
                      and t["last"] - t["t0"] >= continuous[t["label"]] - 1e-6}
         return fired
 
-    def progress(self) -> List[Tuple[Tuple[float, float], float]]:
-        """(center in px, 0..1) of every one shot hold in progress on a visible hand."""
+    def progress(self) -> List[Tuple[int, Tuple[float, float], float]]:
+        """(hand id, center in px, 0..1) of every one shot hold in progress on a visible hand."""
         hasil = []
         for t in self.tangan:
             if t["t_hilang"] is None and t["label"] in self._holds:
                 bagian = min(1.0, (self._now - t["t0"]) / self._holds[t["label"]])
-                hasil.append(((float(t["lm"][9][0]), float(t["lm"][9][1])), bagian))
+                hasil.append((t["id"], (float(t["lm"][9][0]), float(t["lm"][9][1])), bagian))
         return hasil

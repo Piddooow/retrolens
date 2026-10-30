@@ -252,8 +252,8 @@ class TestStyles(unittest.TestCase):
         rig = Rig()
         self.assertTrue(rig.ctrl.ganti_gaya(rig.t))
         self.assertEqual(rig.ctrl.gaya, "ASH")
-        self.assertEqual(rig.ctrl.toast(rig.t + 0.5)[0], "Ash")
-        self.assertIsNone(rig.ctrl.toast(rig.t + CFG["style_toast_s"]))
+        self.assertEqual(rig.ctrl.pesan(rig.t + 0.5), "Ash")
+        self.assertEqual(rig.ctrl.pesan(rig.t + CFG["style_toast_s"]), "")
         rig.vanish()
         self.assertFalse(rig.ctrl.ganti_gaya(rig.t))
         rig.run_until(rig.t + END + 0.1)
@@ -397,7 +397,7 @@ class TestRecorders(unittest.TestCase):
 
     def test_video_opens_with_a_working_codec(self):
         rec = self.app.PerekamVideo()
-        self.assertEqual(rec.mulai(self.frames[0], 30.0, 0.0), "Mulai merekam")
+        self.assertEqual(rec.mulai(self.frames[0], 30.0, 0.0), "Recording")
         for i, f in enumerate(self.frames):
             rec.tulis(f, i / 30.0)
         rec.berhenti()

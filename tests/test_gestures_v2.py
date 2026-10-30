@@ -135,7 +135,7 @@ class TestHoldGestures(unittest.TestCase):
         seen = []
         for i in range(int(1.2 * FPS)):
             det.update(i / FPS, [(hand_at(400.0), "Thumb_Up", 0.9, False)], UP, {}, 1280)
-            seen.append([p for _, p in det.progress()])
+            seen.append([p for _, _, p in det.progress()])
         self.assertEqual(seen[0], [0.0])
         self.assertAlmostEqual(seen[15][0], 0.5, places=6)
         # After firing the label is released only when it disappears, so no new ring starts.

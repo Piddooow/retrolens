@@ -25,6 +25,7 @@ from snap.segmenter import PersonSegmenter
 MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds, then snap again"
 MSG_ESTIMATED = "Background estimated, result may not be perfect"
 MSG_CANT_SEE = "I can't see behind you there"
+MSG_NO_PERSON = "I can't see anyone. Step into the frame"
 STYLE_NAMES = {"DUST": "Dust", "ASH": "Ash", "EMBER": "Ember"}
 
 
@@ -69,7 +70,6 @@ class SnapController:
         self._target_waktu = 1.0
         self._pesan = ""
         self._pesan_sampai = -math.inf
-        self._toast = None  # type: Optional[Tuple[str, float, float]]
         self._pudar = None  # type: Optional[Tuple[np.ndarray, float]]
         self._frame = None  # type: Optional[np.ndarray]
         self._frame_tampil = None  # type: Optional[np.ndarray]
@@ -100,7 +100,7 @@ class SnapController:
         # Crossfade weight toward the live body at the end of a reappear (0..1).
         self._k_blend = 0.0
 
-    # Messages and toasts
+    # Messages: one at a time; the HUD shows the current one as a fading toast.
 
     def set_pesan(self, teks: str, now: float, durasi: Optional[float] = None) -> None:
         self._pesan = teks
@@ -108,21 +108,6 @@ class SnapController:
 
     def pesan(self, now: float) -> str:
         return self._pesan if now < self._pesan_sampai else ""
-
-    def set_toast(self, teks: str, now: float, durasi: float) -> None:
-        self._toast = (teks, now, durasi)
-
-    def toast(self, now: float) -> Optional[Tuple[str, float]]:
-        """(text, opacity 0..1) of the current toast, fading in and out over hud_fade_s, or None."""
-        if self._toast is None:
-            return None
-        teks, mulai, durasi = self._toast
-        umur = now - mulai
-        if umur >= durasi:
-            self._toast = None
-            return None
-        fade = self.cfg["hud_fade_s"]
-        return teks, float(smoothstep(min(umur, durasi - umur) / fade))
 
     # Timing
 
@@ -198,17 +183,15 @@ class SnapController:
         self.bg.plate_adj(self._frame_tampil)
         return self.bg.gain_small
 
-    def status_bg(self) -> str:
-        return "BG READY" if self.bg_siap else "BG LEARNING %d%%" % self.bg_persen
-
     def tint(self, now: float) -> Optional[Tuple[np.ndarray, float]]:
         """Soft blue overlay on the unknown background after a refused snap: (mask, opacity) or None."""
         if self._tint is None:
             return None
         hold = self.cfg["pesan_detik"]
         fade = self.cfg["coverage_tint_fade_s"]
-        alpha = self.cfg["coverage_tint_alpha"] * (1.0 - float(smoothstep((now - self._tint_t - hold) / fade)))
-        if alpha <= 0.0:
+        masuk = float(smoothstep((now - self._tint_t) / self.cfg["hud_fade_s"]))
+        alpha = self.cfg["coverage_tint_alpha"] * masuk * (1.0 - float(smoothstep((now - self._tint_t - hold) / fade)))
+        if now - self._tint_t >= hold + fade:
             self._tint = None
             return None
         return self._tint, alpha
@@ -227,7 +210,7 @@ class SnapController:
         if self.state not in (self.LIVE, self.INVISIBLE):
             return False
         self.gaya = STYLES[(STYLES.index(self.gaya) + 1) % len(STYLES)]
-        self.set_toast(STYLE_NAMES[self.gaya], now, self.cfg["style_toast_s"])
+        self.set_pesan(STYLE_NAMES[self.gaya], now, self.cfg["style_toast_s"])
         return True
 
     def picu(self, now: float, asal: Optional[Tuple[float, float]] = None) -> bool:
@@ -238,11 +221,11 @@ class SnapController:
         if not self.siap_dipicu(now):
             return False
         if self._frame_tampil is None or self._mask is None or self.matte.matte is None:
-            self.set_pesan("Tidak ada orang terdeteksi", now)
+            self.set_pesan(MSG_NO_PERSON, now)
             return False
         _, luas = PersonSegmenter.mask_snap(self._mask, self.cfg)
         if luas < self.cfg["mask_luas_min_orang"]:
-            self.set_pesan("Tidak ada orang terdeteksi", now)
+            self.set_pesan(MSG_NO_PERSON, now)
             return False
         zf, _ = self.zona_hapus()
         zona = zf > 0.0

@@ -30,7 +30,8 @@ from snap.dissolve import DissolveRenderer, noise_fraktal, normalisasi, smoothst
 from snap.flash import FlashOverlay, kurva_flash  # noqa: E402,F401
 from snap.gestures import SnapGestureDetector  # noqa: E402,F401
 from snap.matte import MatteEngine  # noqa: E402,F401
-from snap.controller import MSG_CANT_SEE, MSG_ESTIMATED, MSG_NEED_ROOM, STYLE_NAMES, SnapController  # noqa: E402,F401
+from snap.controller import (MSG_CANT_SEE, MSG_ESTIMATED, MSG_NEED_ROOM, MSG_NO_PERSON, STYLE_NAMES,  # noqa: E402,F401
+                             SnapController)  # noqa: E402,F401
 from snap.segmenter import PersonSegmenter  # noqa: E402,F401
 from snap.clock import EffectClock  # noqa: E402,F401
 
@@ -107,7 +108,8 @@ class AudioSnapDetector:
 
     def mulai(self) -> bool:
         if sd is None:
-            self.error = "Modul sounddevice tidak tersedia"
+            print("Sound input unavailable: the sounddevice module is not installed")
+            self.error = "Sound is not available on this computer"
             return False
         try:
             info = sd.query_devices(kind="input")
@@ -118,7 +120,8 @@ class AudioSnapDetector:
                                           channels=1, dtype="float32", callback=self._callback)
             self._stream.start()
         except Exception as e:
-            self.error = "Mikrofon tidak bisa dibuka (%s)" % e
+            print("Microphone error: %s" % e)
+            self.error = "Cannot open the microphone"
             self._tutup_stream()
             return False
         self._stop.clear()
@@ -145,7 +148,7 @@ class AudioSnapDetector:
                     i = self._antrean.get(timeout=0.1)
                 except queue.Empty:
                     if time.monotonic() - terakhir > cfg["audio_putus_detik"]:
-                        self.error = "Mikrofon terputus"
+                        self.error = "The microphone was disconnected"
                         self.aktif = False
                         return
                     continue
@@ -168,7 +171,8 @@ class AudioSnapDetector:
                 elif onset:
                     self._event.put(t)
         except Exception as e:
-            self.error = "Audio berhenti (%s)" % e
+            print("Audio stopped: %s" % e)
+            self.error = "Sound stopped working"
             self.aktif = False
 
     def mulai_kalibrasi(self, now: float) -> bool:
@@ -190,9 +194,9 @@ class AudioSnapDetector:
         dt = now - kal["mulai"]
         hening = self.cfg["audio_kalibrasi_hening_detik"]
         if dt < hening:
-            return "Kalibrasi suara: diam sebentar... %d" % int(math.ceil(hening - dt))
+            return "Sound check: stay quiet... %d" % int(math.ceil(hening - dt))
         sisa = hening + self.cfg["audio_kalibrasi_jentik_detik"] - dt
-        return "Kalibrasi suara: jentikkan jari %d kali... %d" % (
+        return "Sound check: snap %d times... %d" % (
             self.cfg["audio_kalibrasi_jumlah"], max(1, int(math.ceil(sisa))))
 
     def _langkah_kalibrasi(self, kal: Dict[str, Any], t: float, e: float) -> None:
@@ -212,7 +216,7 @@ class AudioSnapDetector:
     def _selesaikan_kalibrasi(self, kal: Dict[str, Any]) -> str:
         cfg = self.cfg
         if not kal["hening"] or not kal["jentik"]:
-            return "Kalibrasi gagal, tekan K lagi"
+            return "Sound check failed. Press K to try again"
         # Puncak saat hening, bukan median: median terlalu rendah sehingga suara bicara ikut memicu.
         noise = max(kal["hening"])
         puncak = []  # type: List[Tuple[float, float]]
@@ -224,7 +228,8 @@ class AudioSnapDetector:
             if len(puncak) == cfg["audio_kalibrasi_jumlah"]:
                 break
         if len(puncak) < cfg["audio_kalibrasi_jumlah"]:
-            return "Kalibrasi gagal: hanya %d jentikan terdengar, tekan K lagi" % len(puncak)
+            return "Sound check failed: I heard %d of %d snaps. Press K to try again" % (
+                len(puncak), cfg["audio_kalibrasi_jumlah"])
         ambang = math.sqrt(max(noise, 1e-12) * min(e for _, e in puncak))
         self.onset.ambang_kalibrasi = ambang
         self.ambang_tersimpan = ambang
@@ -233,8 +238,9 @@ class AudioSnapDetector:
                 json.dump({"ambang": ambang, "noise": noise, "jentik_terlemah": min(e for _, e in puncak),
                            "dibuat": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=2)
         except OSError as e:
-            return "Kalibrasi dipakai tapi gagal disimpan (%s)" % e
-        return "Kalibrasi suara tersimpan"
+            print("Cannot save %s: %s" % (self.path_kalibrasi, e))
+            return "Sound check works, but it could not be saved"
+        return "Sound check saved"
 
     def ambil_event(self) -> List[float]:
         return self._kuras(self._event)

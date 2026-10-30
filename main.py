@@ -20,8 +20,8 @@ FOLDER = os.path.dirname(os.path.abspath(__file__))
 JENDELA = 'RETROLENS Pake Python'
 PATH_KALIBRASI = os.path.join(FOLDER, "snap_kalibrasi.json")
 FOLDER_REKAMAN = os.path.join(FOLDER, "rekaman")
-BANTUAN_SNAP = "M mode, B room, S snap, X style, H help, T trigger, K kalibrasi, D debug, V rekam, R reset, Q keluar"
-BANTUAN_RETROLENS = "M mode SNAP, V rekam, Q keluar"
+BANTUAN_SNAP = "M mode, B learn room, S snap, X style, H help, T trigger, K sound check, D debug, V record, R reset, Q quit"
+BANTUAN_RETROLENS = "M for snap mode, V to record, Q to quit"
 WARNA_TINT = (235, 175, 90)
 # The D key cycles through these views.
 DEBUG_VIEWS = ("off", "stats", "matte", "zone", "coverage", "gain")
@@ -56,12 +56,25 @@ BANTUAN_KARTU = (
     "Keys: S snap, B learn room, X style, H help, R reset",
     "D debug, V record, Shift+V save frames, M mode, Q quit",
 )
-PETUNJUK_TRIGGER = {
-    "GESTUR": "Jentikkan jari (jempol + jari tengah) di depan kamera, atau tekan S",
-    "SUARA": "Jentikkan jari sampai terdengar, atau tekan S",
-    "ATAU": "Jentikkan jari (gerakan atau bunyi), atau tekan S",
-    "DAN": "Jentikkan jari: gerakan dan bunyi harus terdeteksi, atau tekan S",
+PETUNJUK_SNAP = {
+    "GESTUR": "Snap your fingers to vanish",
+    "SUARA": "Snap loud enough for me to hear, or press S",
+    "ATAU": "Snap your fingers to vanish",
+    "DAN": "Snap where I can see and hear it",
 }
+PETUNJUK_PORTAL = "Touch thumb and pinkie to change the filter. M for snap mode"
+NAMA_TRIGGER = {"GESTUR": "gesture", "SUARA": "sound", "ATAU": "gesture or sound", "DAN": "gesture and sound"}
+NAMA_STATE = {SnapController.LIVE: "Live", SnapController.PLATE_CAPTURE: "Learning room",
+              SnapController.VANISH: "Vanishing", SnapController.INVISIBLE: "Invisible",
+              SnapController.REAPPEAR: "Coming back"}
+
+
+def bagian_rekam(rekam: Tuple[bool, int]) -> List[Tuple[str, Tuple[int, int, int]]]:
+    """Status pill parts for recording: (recording video, frames saved or -1)."""
+    bagian = [("REC", hud.MERAH)] if rekam[0] else []
+    if rekam[1] >= 0:
+        bagian.append(("PNG %d" % rekam[1], hud.MERAH))
+    return bagian
 
 MSG_GESTURE_MISSING = "Gesture model missing, only snap works. See README"
 
@@ -249,9 +262,7 @@ class Retrolens:
                     cv2.putText(img, f"PORTAL: {filter_name}", (top_pts[0][0], top_pts[0][1] - 10),
                                 cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), 2)
 
-        # Overlay Teks
-        cv2.putText(img, "Ganti Filter: Jempol & Kelingking", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(img, f"Filter Aktif: {filters[self.current_filter]}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        # The filter name and how to change it are drawn by the HUD, so recordings stay clean.
 
 
 class Timestamp:
@@ -292,12 +303,6 @@ def tumpuk(img, peta, warna, opacity: float) -> None:
 def skala_muat(teks: str, lebar_maks: int, skala: float, tebal: int = 1) -> float:
     (lebar_teks, _), _ = cv2.getTextSize(teks, cv2.FONT_HERSHEY_SIMPLEX, skala, tebal)
     return skala if lebar_teks <= lebar_maks else skala * lebar_maks / float(lebar_teks)
-
-
-def tulis_bawah(img, teks: str, baris_dari_bawah: int, warna=(255, 255, 255)) -> None:
-    h, w = img.shape[:2]
-    skala = skala_muat(teks, w - 20, 0.55)
-    tulis(img, teks, (w // 2, h - 14 - int(34 * baris_dari_bawah)), skala, warna, tengah=True)
 
 
 class PengukurFPS:
@@ -341,13 +346,13 @@ class PerekamVideo:
                 break
             writer.release()
         else:
-            return "Gagal membuat file rekaman"
+            return "Cannot start recording"
         self.writer = writer
         self.ukuran = (w, h)
         self.t0 = now
         self.ditulis = 0
         print("Merekam ke %s (%.1f fps)" % (self.path, self.fps))
-        return "Mulai merekam"
+        return "Recording"
 
     def tulis(self, frame, now: float) -> None:
         if self.writer is None or (frame.shape[1], frame.shape[0]) != self.ukuran:
@@ -363,7 +368,7 @@ class PerekamVideo:
         self.writer.release()
         self.writer = None
         print("Rekaman disimpan: %s" % self.path)
-        return "Rekaman disimpan: rekaman/%s" % os.path.basename(self.path)
+        return "Saved to rekaman/%s" % os.path.basename(self.path)
 
 
 class PerekamPNG:
@@ -408,6 +413,35 @@ class PerekamPNG:
         return pesan
 
 
+class HudPortal:
+    """Status pill, hint and toast for portal mode; snap mode draws its own in ModeSnap."""
+
+    def __init__(self, cfg: Dict[str, Any]):
+        self.cfg = cfg
+        self.t_masuk = -math.inf
+        self.pesan = ""
+        self.sampai = -math.inf
+        self._toast = hud.Pudar(cfg["hud_fade_s"])
+        self._petunjuk = hud.Pudar(cfg["hud_fade_s"])
+
+    def masuk(self, now: float) -> None:
+        self.t_masuk = now
+
+    def set_pesan(self, teks: str, now: float) -> None:
+        self.pesan, self.sampai = teks, now + self.cfg["pesan_detik"] * 2
+
+    def gambar(self, img, now: float, fps: float, nama_filter: str, rekam: Tuple[bool, int]) -> None:
+        masuk = float(smoothstep((now - self.t_masuk) / self.cfg["hud_fade_s"]))
+        bagian = [("Portal", hud.PUTIH), (nama_filter.title(), hud.PUTIH), ("%d fps" % int(round(fps)), hud.PUTIH)]
+        hud.pil(img, bagian + bagian_rekam(rekam), masuk)
+        for pudar, teks, gambar in ((self._toast, self.pesan if now < self.sampai else "", hud.toast),
+                                    (self._petunjuk, PETUNJUK_PORTAL, hud.petunjuk)):
+            pudar.set(teks, now)
+            tampil = pudar.get(now)
+            if tampil is not None:
+                gambar(img, tampil[0], tampil[1])
+
+
 class ModeSnap:
     """Lem antara kamera, detektor, dan SnapController, plus HUD dan overlay debug."""
 
@@ -431,10 +465,15 @@ class ModeSnap:
         self.catatan_gestur = catatan_gestur
         self.tahan = HoldGestureDetector(cfg)
         self._tangan = []  # type: List[Tuple[np.ndarray, str, float, bool]]
-        self._cincin = []  # type: List[Tuple[Tuple[float, float], float]]
+        self._cincin = []  # type: List[Tuple[int, Tuple[float, float], float]]
         self._denyut = None  # type: Optional[Tuple[float, Tuple[float, float]]]
         self.bantuan = False
         self.t_bantuan = -math.inf
+        self.t_masuk = -math.inf
+        self._pudar_tengah = hud.Pudar(cfg["hud_fade_s"])
+        self._pudar_toast = hud.Pudar(cfg["hud_fade_s"])
+        self._pudar_petunjuk = hud.Pudar(cfg["hud_fade_s"])
+        self._cincin_pudar = {}  # type: Dict[int, Tuple[Tuple[float, float], float, float]]
 
     def _holds(self) -> Dict[str, float]:
         """Hold gestures that have an action in the current state: label -> hold seconds."""
@@ -456,6 +495,7 @@ class ModeSnap:
                 or bool(self._holds()) or bool(self._terus()))
 
     def masuk(self, now: float) -> None:
+        self.t_masuk = now
         self.ctrl.reset(now)
         self._mulai_ulang_input()
         if self.catatan_gestur:
@@ -482,17 +522,17 @@ class ModeSnap:
         if self.audio is not None and self.audio.aktif:
             return True
         if not self.cfg["audio_aktif"]:
-            self.ctrl.set_pesan("Audio dimatikan di CONFIG (audio_aktif)", now)
+            self.ctrl.set_pesan("Sound is turned off in the settings", now)
             return False
         if self.audio_gagal:
-            self.ctrl.set_pesan("Mikrofon tidak tersedia, hanya mode GESTUR", now)
+            self.ctrl.set_pesan("No microphone, using gestures only", now)
             return False
         self.audio = AudioSnapDetector(self.cfg, PATH_KALIBRASI)
         if self.audio.mulai():
             return True
         self.audio_gagal = True
         print(self.audio.error)
-        self.ctrl.set_pesan(self.audio.error + ". Mode trigger: GESTUR", now, self.cfg["pesan_detik"] * 3)
+        self.ctrl.set_pesan(self.audio.error + ". Using gestures only", now, self.cfg["pesan_detik"] * 3)
         return False
 
     def _cek_audio(self, now: float) -> None:
@@ -504,7 +544,7 @@ class ModeSnap:
         self.audio.hentikan()
         if self.mode_trigger != "GESTUR":
             self.mode_trigger = "GESTUR"
-        self.ctrl.set_pesan(self.audio.error + ". Mode trigger: GESTUR", now, self.cfg["pesan_detik"] * 3)
+        self.ctrl.set_pesan(self.audio.error + ". Using gestures only", now, self.cfg["pesan_detik"] * 3)
 
     def _picu(self, now: float, asal: Optional[Tuple[float, float]]) -> None:
         if self.ctrl.picu(now, asal):
@@ -561,6 +601,7 @@ class ModeSnap:
             for pesan in self.audio.ambil_pesan():
                 self.ctrl.set_pesan(pesan, now, self.cfg["pesan_detik"] * 2)
         gestur = []  # type: List[Tuple[float, Tuple[float, float]]]
+        cincin_lama = {k: (pusat, bagian) for k, pusat, bagian in self._cincin}
         self._tangan, self._cincin = [], []
         # Time control only lasts while a fist or pointing hand is seen this frame.
         self.ctrl.atur_waktu(False, False)
@@ -570,6 +611,12 @@ class ModeSnap:
             gestur = self.gestur.perbarui(now, daftar, w, h)
             if self.hold_aktif:
                 self._perbarui_tahan(now, daftar, hasil_tangan, w)
+        if self._denyut is None or self._denyut[0] != now:
+            # A hold that stopped without firing fades its ring out; a fired one pulses instead.
+            aktif = {k for k, _, _ in self._cincin}
+            for k, (pusat, bagian) in cincin_lama.items():
+                if k not in aktif:
+                    self._cincin_pudar[k] = (pusat, bagian, now)
         kalibrasi = audio_aktif and self.audio.sedang_kalibrasi()
         if not kalibrasi and self.ctrl.siap_dipicu(now):
             dipicu, asal = self.pemicu.periksa(now, self.mode_trigger, gestur, suara)
@@ -598,9 +645,9 @@ class ModeSnap:
                 return
             self.mode_trigger = berikut
             if berikut != "GESTUR" and self.audio is not None and self.audio.ambang_tersimpan is None:
-                self.ctrl.set_pesan("Trigger %s. Tekan K untuk kalibrasi suara" % berikut, now)
+                self.ctrl.set_pesan("Trigger: %s. Press K for a sound check" % NAMA_TRIGGER[berikut], now)
             else:
-                self.ctrl.set_pesan("Trigger: %s" % berikut, now)
+                self.ctrl.set_pesan("Trigger: %s" % NAMA_TRIGGER[berikut], now)
         elif huruf == "k":
             if self.ctrl.state != SnapController.LIVE:
                 return
@@ -673,8 +720,9 @@ class ModeSnap:
         alpha = self.cfg["debug_alpha"]
         matte = self.ctrl.matte.matte
         label = "Debug view: %s  (D for next)" % view
+        y_label = 70
         if matte is None or matte.shape != (h, w):
-            tulis(img, label + "  -  waiting for the camera", (10, 60), 0.55)
+            tulis(img, label + "  -  waiting for the camera", (10, y_label), 0.55)
             return
         if view == "matte":
             tumpuk(img, matte, (0, 200, 0), alpha)
@@ -693,10 +741,49 @@ class ModeSnap:
             warna = cv2.resize(warna, (w, h), interpolation=cv2.INTER_LINEAR)
             cv2.addWeighted(img, 1.0 - alpha, warna, alpha, 0.0, dst=img)
             label += "  (gain %.2f to %.2f)" % (float(gain.min()), float(gain.max()))
-        tulis(img, label, (10, 60), skala_muat(label, w - 20, 0.55))
+        tulis(img, label, (10, y_label), skala_muat(label, w - 20, 0.55))
 
-    def gambar_hud(self, img, now: float, fps: float) -> None:
-        h, w = img.shape[:2]
+    def _petunjuk(self) -> str:
+        """The one context hint for the current state."""
+        st = self.ctrl.state
+        if self.audio is not None and self.audio.aktif and self.audio.sedang_kalibrasi():
+            return ""
+        if st == SnapController.LIVE:
+            if self.audio is not None and self.audio.aktif and self.audio.diam and self.mode_trigger != "GESTUR":
+                return "The microphone hears nothing. Check microphone access in System Settings"
+            if not self.ctrl.bg_siap:
+                if self.hold_aktif:
+                    return "Show a thumbs up (or press B), then step out so I can learn the room"
+                return "Press B, then step out so I can learn the room"
+            return PETUNJUK_SNAP[self.mode_trigger] + "  (H for help)"
+        if st == SnapController.PLATE_CAPTURE:
+            return "Stay out of the frame"
+        if st == SnapController.INVISIBLE:
+            return "Snap or show your open palm to come back" if self.hold_aktif else "Snap or press S to come back"
+        if self.hold_aktif and self.ctrl.kontrol_waktu_aktif():
+            return "Hold a fist to freeze time, point up for slow motion"
+        return ""
+
+    def _teks_tengah(self, now: float) -> str:
+        if self.ctrl.state == SnapController.PLATE_CAPTURE:
+            sisa = self.ctrl.sisa_hitung_mundur(now)
+            return "Step out of the frame  %d" % sisa if sisa > 0 else "Learning the room..."
+        if self.audio is not None and self.audio.aktif and self.audio.sedang_kalibrasi():
+            return self.audio.teks_kalibrasi(now)
+        return ""
+
+    def _bagian_pil(self, fps: float, rekam: Tuple[bool, int]) -> List[Tuple[str, Tuple[int, int, int]]]:
+        ctrl = self.ctrl
+        siap = ("Ready", hud.HIJAU) if ctrl.bg_siap else ("Learning %d%%" % ctrl.bg_persen, hud.KUNING)
+        bagian = [("Snap", hud.PUTIH), (NAMA_STATE[ctrl.state], hud.PUTIH), (STYLE_NAMES[ctrl.gaya], hud.PUTIH),
+                  siap, ("%d fps" % int(round(fps)), hud.PUTIH)]
+        return bagian + bagian_rekam(rekam)
+
+    def gambar_hud(self, img, now: float, fps: float, rekam: Tuple[bool, int] = (False, -1)) -> None:
+        """Everything drawn over the shown frame; never part of a recording.
+
+        rekam = (recording video, frames saved by Shift+V or -1 when off).
+        """
         tint = self.ctrl.tint(now)
         if tint is not None and tint[0].shape == img.shape[:2]:
             # Show which part of the room is still unknown after a refused snap.
@@ -708,38 +795,33 @@ class ModeSnap:
             self.gambar_debug(img, now)
         elif view != "off":
             self.gambar_peta(img, view)
-        status = "Mode SNAP  |  State %s  |  Style %s  |  Trigger %s  |  %s  |  %d FPS" % (
-            self.ctrl.state, STYLE_NAMES[self.ctrl.gaya], self.mode_trigger, self.ctrl.status_bg(), int(round(fps)))
-        tulis(img, status, (10, 30), skala_muat(status, w - 120, 0.6), (0, 255, 255))
-
-        tengah = ""
-        if self.ctrl.state == SnapController.PLATE_CAPTURE:
-            sisa = self.ctrl.sisa_hitung_mundur(now)
-            tengah = "Step out of the frame: %d" % sisa if sisa > 0 else "Learning the room, stay out of the frame..."
-        elif self.audio is not None and self.audio.aktif and self.audio.sedang_kalibrasi():
-            tengah = self.audio.teks_kalibrasi(now)
-        if tengah:
-            tulis(img, tengah, (w // 2, h // 2), skala_muat(tengah, w - 40, 1.2, 2), (255, 255, 255), 2, tengah=True)
-
-        pesan = self.ctrl.pesan(now)
-        if pesan:
-            tulis_bawah(img, pesan, 2, (0, 255, 255))
-        elif self.ctrl.state == SnapController.LIVE and not tengah:
-            if self.audio is not None and self.audio.aktif and self.audio.diam and self.mode_trigger != "GESTUR":
-                tulis_bawah(img, "Mikrofon diam. Cek izin mikrofon terminal di System Settings", 2, (0, 165, 255))
-            else:
-                tulis_bawah(img, PETUNJUK_TRIGGER[self.mode_trigger], 2)
-        tulis_bawah(img, BANTUAN_SNAP, 1, (200, 200, 200))
-        toast = self.ctrl.toast(now)
-        if toast is not None:
-            hud.toast(img, toast[0], toast[1], self.cfg)
+        masuk = float(smoothstep((now - self.t_masuk) / self.cfg["hud_fade_s"]))
+        hud.pil(img, self._bagian_pil(fps, rekam), masuk)
+        for pudar, teks, gambar in ((self._pudar_tengah, self._teks_tengah(now), hud.tengah),
+                                    (self._pudar_toast, self.ctrl.pesan(now), hud.toast),
+                                    (self._pudar_petunjuk, self._petunjuk(), hud.petunjuk)):
+            pudar.set(teks, now)
+            tampil = pudar.get(now)
+            if tampil is not None:
+                gambar(img, tampil[0], tampil[1])
         k = float(smoothstep((now - self.t_bantuan) / self.cfg["help_fade_s"]))
         alpha_bantuan = k if self.bantuan else 1.0 - k
         if alpha_bantuan > 0.0:
             hud.kartu_bantuan(img, BANTUAN_KARTU, alpha_bantuan, self.cfg)
-        for pusat, bagian in self._cincin:
-            hud.cincin_tahan(img, pusat, bagian, self.cfg)
-        if self._denyut is not None and not hud.denyut(img, self._denyut[1], now - self._denyut[0], self.cfg):
+        self._gambar_cincin(img, now)
+
+    def _gambar_cincin(self, img, now: float) -> None:
+        cfg = self.cfg
+        for _, pusat, bagian in self._cincin:
+            hud.cincin_tahan(img, pusat, bagian, cfg)
+        # A hold that was let go fades out instead of disappearing.
+        for kunci, (pusat, bagian, sejak) in list(self._cincin_pudar.items()):
+            alpha = cfg["ring_alpha"] * (1.0 - float(smoothstep((now - sejak) / cfg["hud_fade_s"])))
+            if alpha <= 0.0:
+                del self._cincin_pudar[kunci]
+                continue
+            hud.cincin(img, pusat, bagian, cfg["ring_radius_px"], cfg["ring_stroke_px"], alpha)
+        if self._denyut is not None and not hud.denyut(img, self._denyut[1], now - self._denyut[0], cfg):
             self._denyut = None
 
 
@@ -862,12 +944,23 @@ def main() -> int:
         mode = "RETROLENS"
         if args.snap:
             if snap is None:
-                print("Mode SNAP butuh selfie_segmenter.tflite; membuka mode RETROLENS.")
+                print("Snap mode needs selfie_segmenter.tflite; opening portal mode.")
             else:
                 mode = "SNAP"
                 snap.masuk(time.monotonic())
-        pesan_umum = ""
-        pesan_umum_sampai = 0.0
+        portal = HudPortal(CONFIG)
+        if mode == "RETROLENS":
+            portal.masuk(time.monotonic())
+
+        def kabar(teks: str, now: float) -> None:
+            """One message at a time, shown as a toast in the current mode."""
+            if not teks:
+                return
+            if mode == "SNAP":
+                snap.ctrl.set_pesan(teks, now, CONFIG["pesan_detik"] * 2)
+            else:
+                portal.set_pesan(teks, now)
+
         gagal_baca = 0
         print("%s Tekan tombol 'q' di keyboard untuk keluar." % (
             "Memutar video..." if args.sumber else "Membuka Kamera..."))
@@ -923,17 +1016,11 @@ def main() -> int:
             perekam_png.tulis(tampil)
             with profiler.stage("hud"):
                 layar = tampil.copy()
+                rekam = (perekam.aktif, perekam_png.ditulis if perekam_png.aktif else -1)
                 if mode == "SNAP":
-                    snap.gambar_hud(layar, now, pengukur.fps)
+                    snap.gambar_hud(layar, now, pengukur.fps, rekam)
                 else:
-                    tulis_bawah(layar, BANTUAN_RETROLENS, 1, (200, 200, 200))
-                if now < pesan_umum_sampai:
-                    tulis_bawah(layar, pesan_umum, 3, (0, 255, 255))
-                if perekam.aktif:
-                    cv2.circle(layar, (w - 95, 25), 9, (0, 0, 255), -1)
-                    tulis(layar, "REC", (w - 78, 33), 0.7, (0, 0, 255), 2)
-                if perekam_png.aktif:
-                    tulis(layar, "PNG %d" % perekam_png.ditulis, (w - 150, 63), 0.6, (0, 0, 255), 2)
+                    portal.gambar(layar, now, pengukur.fps, filters[retrolens.current_filter], rekam)
 
             with profiler.stage("display"):
                 cv2.imshow(JENDELA, layar)
@@ -948,28 +1035,26 @@ def main() -> int:
                 continue
             # Shift+V must be checked before lowercasing, or it would act like V.
             if chr(key) == "V":
-                pesan_umum = perekam_png.berhenti() if perekam_png.aktif else perekam_png.mulai()
-                pesan_umum_sampai = now + CONFIG["pesan_detik"] * 2
+                kabar(perekam_png.berhenti() if perekam_png.aktif else perekam_png.mulai(), now)
                 continue
             huruf = chr(key).lower()
             if huruf == "q":
                 break
             elif huruf == "m":
                 if snap is None:
-                    pesan_umum = "Mode SNAP butuh selfie_segmenter.tflite"
-                    pesan_umum_sampai = now + CONFIG["pesan_detik"] * 2
+                    kabar("Snap mode needs the file selfie_segmenter.tflite", now)
                 elif mode == "RETROLENS":
                     mode = "SNAP"
                     snap.masuk(now)
                 else:
                     snap.keluar(now)
                     mode = "RETROLENS"
+                    portal.masuk(now)
             elif huruf == "v":
                 if perekam.aktif:
-                    pesan_umum = perekam.berhenti()
+                    kabar(perekam.berhenti(), now)
                 else:
-                    pesan_umum = perekam.mulai(tampil, pengukur.fps or CONFIG["fps_target"], now)
-                pesan_umum_sampai = now + CONFIG["pesan_detik"] * 2
+                    kabar(perekam.mulai(tampil, pengukur.fps or CONFIG["fps_target"], now), now)
             elif mode == "SNAP":
                 snap.tombol(huruf, now)
         return 0

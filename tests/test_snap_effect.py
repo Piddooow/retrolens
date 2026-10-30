@@ -171,7 +171,7 @@ class TesLinimasa(unittest.TestCase):
         frame, _ = frame_sintetis()
         ctrl.amati(0.0, frame, frame, np.zeros((PT, PL), dtype=np.float32))
         self.assertFalse(ctrl.picu(0.0))
-        self.assertEqual(ctrl.pesan(0.1), "Tidak ada orang terdeteksi")
+        self.assertEqual(ctrl.pesan(0.1), se.MSG_NO_PERSON)
         self.assertEqual(ctrl.pesan(0.1 + CFG["pesan_detik"]), "")
 
 
@@ -296,7 +296,7 @@ class TesAudio(unittest.TestCase):
         det.onset = se.OnsetAudio(CFG, self.SR)
         det.path_kalibrasi = os.devnull
         kal = {"hening": [1.0, 2.0, 4.0], "jentik": [(0.0, 900.0), (0.05, 800.0), (1.0, 100.0), (2.0, 400.0)]}
-        self.assertEqual(det._selesaikan_kalibrasi(kal), "Kalibrasi suara tersimpan")
+        self.assertEqual(det._selesaikan_kalibrasi(kal), "Sound check saved")
         self.assertAlmostEqual(det.onset.ambang_kalibrasi, (4.0 * 100.0) ** 0.5)
 
     def test_kalibrasi_gagal_jika_jentikan_kurang(self):
@@ -304,7 +304,7 @@ class TesAudio(unittest.TestCase):
         det.cfg = CFG
         det.onset = se.OnsetAudio(CFG, self.SR)
         kal = {"hening": [5.0], "jentik": [(0.0, 900.0), (1.0, 3.0)]}
-        self.assertIn("hanya 1 jentikan", det._selesaikan_kalibrasi(kal))
+        self.assertIn("1 of %d snaps" % CFG["audio_kalibrasi_jumlah"], det._selesaikan_kalibrasi(kal))
         self.assertIsNone(det.onset.ambang_kalibrasi)
 
 

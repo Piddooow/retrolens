@@ -256,7 +256,9 @@ class TestCoverageGate(unittest.TestCase):
         ctrl = self.controller(0.99)
         self.assertFalse(ctrl.picu(0.1))
         self.assertEqual(ctrl.pesan(0.2), se.MSG_NEED_ROOM)
-        tint = ctrl.tint(0.2)
+        # The tint eases in, holds, then eases out; it never appears at full strength at once.
+        self.assertLess(ctrl.tint(0.1 + 1.0 / 30)[1], 0.1 * CFG["coverage_tint_alpha"])
+        tint = ctrl.tint(0.1 + CFG["hud_fade_s"])
         self.assertIsNotNone(tint)
         self.assertAlmostEqual(tint[1], CFG["coverage_tint_alpha"])
         self.assertTrue(tint[0].any())
