@@ -428,10 +428,12 @@ class ModeSnap:
             self._picu(now, None)
         elif huruf == "t":
             berikut = MODE_TRIGGER[(MODE_TRIGGER.index(self.mode_trigger) + 1) % len(MODE_TRIGGER)]
-            if berikut != "GESTUR" and not self._pastikan_audio(now):
-                berikut = "GESTUR"
-            self.mode_trigger = berikut
             self.pemicu.reset()
+            if berikut != "GESTUR" and not self._pastikan_audio(now):
+                # Pesan alasan dari _pastikan_audio dibiarkan tampil.
+                self.mode_trigger = "GESTUR"
+                return
+            self.mode_trigger = berikut
             if berikut != "GESTUR" and self.audio is not None and self.audio.ambang_tersimpan is None:
                 self.ctrl.set_pesan("Trigger %s. Tekan K untuk kalibrasi suara" % berikut, now)
             else:
