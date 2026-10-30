@@ -46,9 +46,11 @@ def load(folder: str, sub: str, index: int, flags: int = cv2.IMREAD_COLOR) -> Op
 
 def expected_boundaries(cfg: Dict) -> Dict[Tuple[str, str], float]:
     end = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
-    table = {("SNAP", "KOSONG"): end, ("VANISH", "INVISIBLE"): end,
-             ("KOSONG", "KEMBALI"): end + cfg["kosong_detik"],
-             ("KEMBALI", "LIVE"): end + cfg["kosong_detik"] + cfg["kembali_detik"]}
+    table = {("SNAP", "KOSONG"): end, ("VANISH", "INVISIBLE"): end}
+    # Renders made before the v2 state machine had a fixed empty and return time.
+    if "kosong_detik" in cfg:
+        table[("KOSONG", "KEMBALI")] = end + cfg["kosong_detik"]
+        table[("KEMBALI", "LIVE")] = end + cfg["kosong_detik"] + cfg["kembali_detik"]
     if "reappear_sweep_s" in cfg:
         table[("REAPPEAR", "LIVE")] = (cfg["reappear_sweep_s"] + cfg["reappear_life_s"]
                                        + cfg["reappear_blend_s"])

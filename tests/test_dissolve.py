@@ -188,7 +188,7 @@ class TestDissolveRenderer(DissolveCase):
 
 class TestControllerDissolve(unittest.TestCase):
     def run_snap(self, cfg, frames_for):
-        """Snap at 0.1 s and render at 30 fps until KEMBALI. frames_for(t) -> (frame, mask_lo)."""
+        """Snap at 0.1 s and render at 30 fps until 2 s into INVISIBLE. frames_for(t) -> (frame, mask_lo)."""
         ctrl = se.SnapController(cfg)
         scene = room(22)
         ctrl.bg.set_plate(scene)
@@ -197,7 +197,7 @@ class TestControllerDissolve(unittest.TestCase):
         self.assertTrue(ctrl.picu(0.1))
         shots = []
         t = 0.1
-        while t < 0.1 + ctrl.kosong_akhir - DT:
+        while t < 0.1 + ctrl.debu_akhir + 2.0:
             t += DT
             frame, mask = frames_for(t - 0.1)
             ctrl.amati(t, frame, cv2.resize(frame, (LW, LH), interpolation=cv2.INTER_AREA), mask)
@@ -210,7 +210,7 @@ class TestControllerDissolve(unittest.TestCase):
         scene = room(22)
         frame = scene_with_person(scene)
         ctrl, _, shots = self.run_snap(cfg, lambda t: (frame, soft_person()))
-        empty = [s for s in shots if s[1] == "KOSONG"]
+        empty = [s for s in shots if s[1] == "INVISIBLE"]
         self.assertGreater(len(empty), 30)
         for t, _, out, _, info in empty:
             self.assertTrue(np.array_equal(out, scene), "t=%.3f" % t)
@@ -222,7 +222,7 @@ class TestControllerDissolve(unittest.TestCase):
         scene = room(22)
         frame = scene_with_person(scene)
         ctrl, _, shots = self.run_snap(CFG, lambda t: (frame, soft_person()))
-        empty = [s for s in shots if s[1] == "KOSONG"]
+        empty = [s for s in shots if s[1] == "INVISIBLE"]
         self.assertGreater(len(empty), 30)
         for t, _, out, _, info in empty:
             inside = info["zone"] > 0
@@ -237,34 +237,51 @@ class TestControllerDissolve(unittest.TestCase):
             return scene_with_person(scene, dx), soft_person(dx)
 
         _, _, shots = self.run_snap(cfg, frames_for)
-        empty = [s for s in shots if s[1] == "KOSONG"]
+        empty = [s for s in shots if s[1] == "INVISIBLE"]
         self.assertGreater(len(empty), 30)
         for t, _, out, _, _ in empty:
             self.assertTrue(np.array_equal(out, scene), "t=%.3f" % t)
 
-    def test_never_seen_room_shows_the_live_frame(self):
+    def test_never_seen_room_is_revealed_softly(self):
         cfg = dict(CFG, bg_noise_on=False)
         scene = room(22)
         ctrl = se.SnapController(cfg)
         ctrl.bg.set_plate(scene)
         frame = scene_with_person(scene)
         mask = soft_person()
-        small = cv2.resize(frame, (LW, LH), interpolation=cv2.INTER_AREA)
-        ctrl.amati(0.0, frame, small, mask)
+
+        def step(t, img, m):
+            ctrl.amati(t, img, cv2.resize(img, (LW, LH), interpolation=cv2.INTER_AREA), m)
+            return ctrl.render(t, img)
+
+        step(0.0, frame, mask)
         self.assertTrue(ctrl.picu(0.1))
+        t = 0.1
+        while t < 0.1 + ctrl.debu_akhir + 0.2:
+            t += DT
+            step(t, frame, mask)
+        self.assertEqual(ctrl.state, "INVISIBLE")
         # The person steps right, onto room the camera never saw.
         moved = scene_with_person(scene, 200)
         moved_mask = soft_person(200)
         unseen = np.zeros((H, W), dtype=bool)
         unseen[400:720, 1100:1200] = True
         ctrl.bg.count[unseen] = 0
-        t = 0.1 + ctrl.debu_akhir + DT
-        ctrl.amati(t, moved, cv2.resize(moved, (LW, LH), interpolation=cv2.INTER_AREA), moved_mask)
-        out = ctrl.render(t, moved)
-        self.assertEqual(ctrl.state, "KOSONG")
-        self.assertTrue(np.array_equal(out[unseen], moved[unseen]))
-        self.assertTrue(np.array_equal(out[~unseen], scene[~unseen]))
-
+        gaps = []
+        for _ in range(int(round(0.6 / DT))):
+            t += DT
+            out = step(t, moved, moved_mask)
+            gaps.append(float(np.abs(out[unseen].astype(np.int16) - moved[unseen]).mean()))
+            self.assertTrue(np.array_equal(out[~unseen], scene[~unseen]), "t=%.3f" % t)
+        self.assertEqual(ctrl.state, "INVISIBLE")
+        self.assertEqual(ctrl.pesan(t), se.MSG_CANT_SEE)
+        # A soft reveal: still mostly hidden on the first frame, monotonic, complete after reveal_fade_s.
+        hidden = float(np.abs(scene[unseen].astype(np.int16) - moved[unseen]).mean())
+        self.assertGreater(gaps[0], 0.8 * hidden)
+        self.assertTrue(all(b <= a + 1e-6 for a, b in zip(gaps, gaps[1:])))
+        done = int(np.ceil(CFG["reveal_fade_s"] / DT))
+        self.assertEqual(gaps[done], 0.0)
+        self.assertEqual(gaps[-1], 0.0)
 
 if __name__ == "__main__":
     unittest.main()

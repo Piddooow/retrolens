@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from snap.config import hex_ke_bgr
+
 # DUST style: the ash color a particle fades to is its luminance times DUST_LUMA plus its color times DUST_TINT.
 DUST_LUMA = 0.55
 DUST_TINT = 0.32
@@ -14,6 +16,8 @@ LUMA_BGR = np.array([0.114, 0.587, 0.299], dtype=np.float32)
 CORNER_DX = np.array([0, 1, 0, 1], dtype=np.int32)
 CORNER_DY = np.array([0, 0, 1, 1], dtype=np.int32)
 CHANNELS = np.arange(4, dtype=np.int32)
+# Resolution of the release time equalization; fine enough that steps are far below one frame.
+EQUALIZE_BINS = 2048
 
 Specks = Tuple[np.ndarray, np.ndarray, np.ndarray]
 
@@ -61,13 +65,22 @@ class DissolveRenderer:
 
     # Preparation (once, under the white flash)
 
-    def siapkan(self, snapshot: np.ndarray, matte: np.ndarray, zone: np.ndarray, cell: int) -> None:
-        """snapshot and matte of the frozen frame, zone = its removal zone, cell = particle cell size in px."""
+    def siapkan(self, snapshot: np.ndarray, matte: np.ndarray, zone: np.ndarray, cell: int, style: str = "DUST",
+                timing: Optional[Tuple[float, float, float]] = None) -> None:
+        """snapshot and matte of the frozen frame, zone = its removal zone, cell = particle cell size in px.
+
+        style is DUST, ASH or EMBER and changes only colors and motion. timing = (start, sweep, life) in
+        seconds, the vanish timing from CONFIG when None.
+        """
         cfg = self.cfg
         h, w = matte.shape
         self.size = (w, h)
         self.cell = cell
-        self.end = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
+        if timing is None:
+            timing = (cfg["debu_mulai_detik"], cfg["debu_sapuan_detik"], cfg["debu_umur_detik"])
+        self.start, self.sweep, self.life = timing
+        self.end = self.start + self.sweep + self.life
+        self._gaya(style)
         self.matte_sum = float(matte.sum())
         self.count = 0
         self.mass = 0.0
@@ -97,7 +110,14 @@ class DissolveRenderer:
         inside = self.matte_box > 0
         lo, hi = float(order[inside].min()), float(order[inside].max())
         order = np.clip((order - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
-        self.T = (cfg["debu_mulai_detik"] + order * cfg["debu_sapuan_detik"]).astype(np.float32)
+        # Remap the order through its matte weighted distribution, so the same amount of body turns to
+        # dust every moment whatever the body shape (wide shoulders would otherwise cause a rush of mass).
+        # The order of release is unchanged: head first, broken up by the noise.
+        weights = self.matte_box[inside]
+        hist, edges = np.histogram(order[inside], bins=EQUALIZE_BINS, range=(0.0, 1.0), weights=weights)
+        cdf = np.concatenate(([0.0], np.cumsum(hist))) / max(float(hist.sum()), 1e-12)
+        order = np.interp(order, edges, cdf)
+        self.T = (self.start + order * self.sweep).astype(np.float32)
         self.snap_box = np.ascontiguousarray(snapshot[box])
 
         self._particles(rng)
@@ -132,11 +152,24 @@ class DissolveRenderer:
         self.p_release = (cells(rel)[iy, ix] / weight).astype(np.float32)
         self.p_x0 = ((gx0 + ix + 0.5) * c).astype(np.float32)
         self.p_y0 = ((gy0 + iy + 0.5) * c).astype(np.float32)
-        luma = (self.p_color * LUMA_BGR).sum(axis=1)
-        self.p_ash = (DUST_LUMA * luma[:, None] + DUST_TINT * self.p_color).astype(np.float32)
+        if self.ash is None:
+            luma = (self.p_color * LUMA_BGR).sum(axis=1)
+            self.p_ash = (DUST_LUMA * luma[:, None] + DUST_TINT * self.p_color).astype(np.float32)
+        else:
+            self.p_ash = np.tile(self.ash, (n, 1))
         self.p_jitter = rng.uniform(cfg["debu_jitter_min"], cfg["debu_jitter_maks"], (n, 2)).astype(np.float32)
         self.p_phase = rng.uniform(0.0, 2.0 * math.pi, n).astype(np.float32)
         self._prev_xy = np.full((n, 2), np.nan, dtype=np.float32)
+
+    def _gaya(self, style: str) -> None:
+        cfg = self.cfg
+        self.style = style
+        self.wind = cfg["ash_wind_scale"] if style == "ASH" else 1.0
+        # Extra downward acceleration in frame heights per second squared.
+        self.drift = cfg["ash_drift"] if style == "ASH" else 0.0
+        # Color the dust fades to; None means the DUST look made from each particle's own color.
+        self.ash = {"ASH": hex_ke_bgr(cfg["ash_color"]), "EMBER": hex_ke_bgr(cfg["ember_particle"])}.get(style)
+        self.glow = hex_ke_bgr(cfg["ember_glow"]) if style == "EMBER" else None
 
     def _roi(self, zone: np.ndarray) -> Tuple[int, int, int, int]:
         """Zone bounding box grown by the farthest any particle and its soft splat can reach."""
@@ -145,9 +178,10 @@ class DissolveRenderer:
         x, y, bw, bh = cv2.boundingRect((zone > 0).view(np.uint8))
         if bw == 0 or bh == 0:
             return (0, 0, 0, 0)
-        life, jit = cfg["debu_umur_detik"], cfg["debu_jitter_maks"]
-        tx = (cfg["debu_angin_kiri"] * life + 0.5 * cfg["debu_percepatan_kiri"] * life * life) * w * jit
-        ty = (cfg["debu_angin_naik"] * life + 0.5 * cfg["debu_percepatan_naik"] * life * life) * h * jit
+        life, jit = self.life, cfg["debu_jitter_maks"]
+        tx = self.wind * (cfg["debu_angin_kiri"] * life + 0.5 * cfg["debu_percepatan_kiri"] * life * life) * w * jit
+        ty = self.wind * (cfg["debu_angin_naik"] * life + 0.5 * cfg["debu_percepatan_naik"] * life * life) * h * jit
+        down = 0.5 * self.drift * h * life * life
         sway = 2.0 * cfg["debu_goyang_px"]
         # Bilinear splat (3 px), Gaussian kernel (2 px per half resolution pixel) and upsampling (2 px).
         pad = 3 + 2 * (int(math.ceil(4.0 * cfg["dust_blur"])) + 1) + 2
@@ -155,14 +189,14 @@ class DissolveRenderer:
         x0 = int(math.floor(x - left - pad))
         x1 = int(math.ceil(x + bw + right + pad))
         y0 = int(math.floor(y - ty - sway - pad))
-        y1 = int(math.ceil(y + bh + sway + pad))
+        y1 = int(math.ceil(y + bh + down + sway + pad))
         # Even edges keep the half resolution splat grid aligned with display pixels.
         return (max(0, x0 - x0 % 2), max(0, y0 - y0 % 2), min(w, x1 + x1 % 2), min(h, y1 + y1 % 2))
 
     # Per frame
 
     def render(self, out: np.ndarray, t: float, extra: Optional[Specks] = None) -> None:
-        """Draw body and dust at t seconds since the snap into out (display frame, uint8, in place).
+        """Draw body and dust at t seconds on the effect timeline into out (display frame, uint8, in place).
 
         extra = more specks to splat in the same pass (ash), as (x, y, weights).
         """
@@ -189,13 +223,21 @@ class DissolveRenderer:
         self._splat(out, splats, region)
 
     def _body(self, out: np.ndarray, t: float) -> float:
+        cfg = self.cfg
         bx, by, bw, bh = self.box
-        s = smoothstep((self.T - np.float32(t)) * np.float32(1.0 / self.cfg["edge_soft_s"]) + np.float32(0.5))
+        s = smoothstep((self.T - np.float32(t)) * np.float32(1.0 / cfg["edge_soft_s"]) + np.float32(0.5))
         alpha = self.matte_box * s
         total = float(alpha.sum())
         if total > 0.0:
             region = out[by:by + bh, bx:bx + bw]
             region[:] = cv2.blendLinear(self.snap_box, region, alpha, 1.0 - alpha)
+            if self.glow is not None:
+                # EMBER: the body glows within ember_glow_px of where it has already turned to dust.
+                released = self.matte_box * (1.0 - s)
+                k = 2 * cfg["ember_glow_px"] + 1
+                near = cv2.dilate(released, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+                glow = near * alpha * np.float32(cfg["ember_glow_strength"])
+                region[:] = cv2.add(region, cv2.merge([glow * c for c in self.glow]), dtype=cv2.CV_8U)
         return total
 
     def _moving(self, t: float) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, float]]:
@@ -205,7 +247,7 @@ class DissolveRenderer:
         edge_inv = np.float32(1.0 / cfg["edge_soft_s"])
         tt = np.float32(t)
         a = np.maximum(tt - self.p_release, np.float32(0.0))
-        u = a * np.float32(1.0 / cfg["debu_umur_detik"])
+        u = a * np.float32(1.0 / self.life)
         # Birth is the exact complement of the body fade, so mass is handed over without a jump.
         birth = 1.0 - smoothstep((self.p_release - tt) * edge_inv + np.float32(0.5))
         alpha = self.p_mass * birth * (1.0 - smoothstep(u))
@@ -218,8 +260,9 @@ class DissolveRenderer:
         jit = self.p_jitter[on]
         phase = self.p_phase[on]
         arah_x = 1.0 if cfg["debu_balik_horizontal"] else -1.0
-        dx = arah_x * (cfg["debu_angin_kiri"] * a + 0.5 * cfg["debu_percepatan_kiri"] * a * a) * w * jit[:, 0]
-        dy = -(cfg["debu_angin_naik"] * a + 0.5 * cfg["debu_percepatan_naik"] * a * a) * h * jit[:, 1]
+        dx = arah_x * self.wind * (cfg["debu_angin_kiri"] * a + 0.5 * cfg["debu_percepatan_kiri"] * a * a) * w * jit[:, 0]
+        dy = -self.wind * (cfg["debu_angin_naik"] * a + 0.5 * cfg["debu_percepatan_naik"] * a * a) * h * jit[:, 1]
+        dy += 0.5 * self.drift * h * a * a
         # The sway starts at zero, so a particle does not jump when it is released.
         dy += cfg["debu_goyang_px"] * (np.sin(2.0 * math.pi * cfg["debu_goyang_hz"] * a + phase) - np.sin(phase))
         x = (self.p_x0[on] + dx).astype(np.float32)

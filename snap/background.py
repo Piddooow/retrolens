@@ -65,6 +65,7 @@ class BackgroundEngine:
         self._step = np.full((height, width, 3), self.cfg["bg_median_step"], dtype=np.uint8)
         self._prev_small = None  # type: Optional[np.ndarray]
         self._prev_sub = None  # type: Optional[np.ndarray]
+        self._last_update = None  # type: Optional[float]
         self._absent_since = None  # type: Optional[float]
         self._auto_armed = True
         self._capture = None  # type: Optional[Dict[str, Any]]
@@ -129,6 +130,13 @@ class BackgroundEngine:
         cfg = self.cfg
         self._ensure(frame)
         messages = []  # type: List[str]
+        if self._last_update is not None and now - self._last_update > cfg["bg_frame_gap_s"]:
+            # Updates paused (for example during a vanish). Frames from before the pause are not
+            # consecutive, so the safe frame count and the noise frame pair start over.
+            self._safe_run[:] = 0
+            self._prev_sub = None
+            self._prev_small = None
+        self._last_update = now
         small, still, absent = self._observe(frame, matte_lo)
 
         unsafe = dilate_to(matte_lo >= cfg["bg_safe_conf"], cfg["bg_safe_margin_px"], self.size)

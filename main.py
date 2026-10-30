@@ -13,25 +13,49 @@ import numpy as np
 from snap import hud
 from snap.gestures import HoldGestureDetector
 from snap.profiler import Profiler
-from snap_effect import (CONFIG, MODE_TRIGGER, AudioSnapDetector, PemicuGabungan, PersonSegmenter,
-                         SnapController, SnapGestureDetector, validasi_config)
+from snap_effect import (CONFIG, MODE_TRIGGER, STYLE_NAMES, AudioSnapDetector, PemicuGabungan, PersonSegmenter,
+                         SnapController, SnapGestureDetector, smoothstep, validasi_config)
 
 FOLDER = os.path.dirname(os.path.abspath(__file__))
 JENDELA = 'RETROLENS Pake Python'
 PATH_KALIBRASI = os.path.join(FOLDER, "snap_kalibrasi.json")
 FOLDER_REKAMAN = os.path.join(FOLDER, "rekaman")
-BANTUAN_SNAP = "M mode, B background, S snap, T trigger, K kalibrasi, D debug, V rekam, R reset, Q keluar"
+BANTUAN_SNAP = "M mode, B room, S snap, X style, H help, T trigger, K kalibrasi, D debug, V rekam, R reset, Q keluar"
 BANTUAN_RETROLENS = "M mode SNAP, V rekam, Q keluar"
 WARNA_TINT = (235, 175, 90)
 # The D key cycles through these views.
 DEBUG_VIEWS = ("off", "stats", "matte", "zone", "coverage", "gain")
 # Hold gestures with an action so far: label -> (CONFIG key of the hold time, states where it acts).
 # Thumb_Down cancels anything that is not LIVE already.
+_SEMUA = (SnapController.LIVE, SnapController.PLATE_CAPTURE) + SnapController.EFFECT_STATES
 HOLD_GESTUR = {
     "Thumb_Up": ("hold_thumb_up_s", (SnapController.LIVE,)),
-    "Thumb_Down": ("hold_thumb_down_s", (SnapController.PLATE_CAPTURE, SnapController.SNAP,
-                                         SnapController.KOSONG, SnapController.KEMBALI)),
+    "Thumb_Down": ("hold_thumb_down_s", _SEMUA[1:]),
+    "Open_Palm": ("hold_palm_s", (SnapController.INVISIBLE,)),
+    "Victory": ("hold_victory_s", (SnapController.LIVE, SnapController.INVISIBLE)),
+    "ILoveYou": ("hold_love_s", _SEMUA),
 }
+# Gestures that act while held: label -> (CONFIG key of the minimum hold, or None for none, states).
+# The controller ignores them during the flash.
+TERUS_GESTUR = {
+    "Closed_Fist": ("hold_fist_min_s", (SnapController.VANISH, SnapController.REAPPEAR)),
+    "Pointing_Up": (None, (SnapController.VANISH, SnapController.REAPPEAR)),
+}
+BANTUAN_KARTU = (
+    "How to use",
+    "",
+    "Snap: vanish, or come back when invisible",
+    "Open palm, 1 s: come back",
+    "Thumbs up, 1 s: learn the room again",
+    "Peace sign, 1 s: change style (Dust, Ash, Ember)",
+    "Fist, hold: freeze time during the effect",
+    "Pointing up, hold: slow motion during the effect",
+    "Rock sign, 1 s: show or hide this help",
+    "Thumbs down, 1 s: cancel and go back to normal",
+    "",
+    "Keys: S snap, B learn room, X style, H help, R reset",
+    "D debug, V record, Shift+V save frames, M mode, Q quit",
+)
 PETUNJUK_TRIGGER = {
     "GESTUR": "Jentikkan jari (jempol + jari tengah) di depan kamera, atau tekan S",
     "SUARA": "Jentikkan jari sampai terdengar, atau tekan S",
@@ -310,9 +334,13 @@ class PerekamVideo:
         self.path = os.path.join(FOLDER_REKAMAN, time.strftime("snap_%Y%m%d_%H%M%S.mp4"))
         h, w = frame.shape[:2]
         self.fps = max(1.0, round(fps, 1))
-        writer = cv2.VideoWriter(self.path, cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (w, h))
-        if not writer.isOpened():
+        # H.264 when this OpenCV build has it, otherwise MPEG-4 Part 2.
+        for kode in ("avc1", "mp4v"):
+            writer = cv2.VideoWriter(self.path, cv2.VideoWriter_fourcc(*kode), self.fps, (w, h))
+            if writer.isOpened():
+                break
             writer.release()
+        else:
             return "Gagal membuat file rekaman"
         self.writer = writer
         self.ukuran = (w, h)
@@ -336,6 +364,48 @@ class PerekamVideo:
         self.writer = None
         print("Rekaman disimpan: %s" % self.path)
         return "Rekaman disimpan: rekaman/%s" % os.path.basename(self.path)
+
+
+class PerekamPNG:
+    """Save every shown frame as a lossless PNG (Shift+V), for checking the effect frame by frame."""
+
+    def __init__(self):
+        self.folder = ""
+        self.ditulis = 0
+
+    @property
+    def aktif(self) -> bool:
+        return bool(self.folder)
+
+    def mulai(self) -> str:
+        folder = os.path.join(FOLDER_REKAMAN, time.strftime("frames_%Y%m%d_%H%M%S"))
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            print("Cannot create %s: %s" % (folder, e))
+            return "Cannot save frames"
+        self.folder, self.ditulis = folder, 0
+        print("Saving frames to %s" % folder)
+        return "Saving frames"
+
+    def tulis(self, frame) -> None:
+        if not self.folder:
+            return
+        path = os.path.join(self.folder, "%05d.png" % self.ditulis)
+        # Compression level 1 keeps it lossless and fast enough to run with the camera.
+        if not cv2.imwrite(path, frame, [cv2.IMWRITE_PNG_COMPRESSION, 1]):
+            print("Cannot write %s, stopping the frame saver" % path)
+            self.berhenti()
+            return
+        self.ditulis += 1
+
+    def berhenti(self) -> str:
+        if not self.folder:
+            return ""
+        pesan = "Saved %d frames to rekaman/%s" % (self.ditulis, os.path.basename(self.folder))
+        print(pesan)
+        self.folder = ""
+        return pesan
 
 
 class ModeSnap:
@@ -363,6 +433,8 @@ class ModeSnap:
         self._tangan = []  # type: List[Tuple[np.ndarray, str, float, bool]]
         self._cincin = []  # type: List[Tuple[Tuple[float, float], float]]
         self._denyut = None  # type: Optional[Tuple[float, Tuple[float, float]]]
+        self.bantuan = False
+        self.t_bantuan = -math.inf
 
     def _holds(self) -> Dict[str, float]:
         """Hold gestures that have an action in the current state: label -> hold seconds."""
@@ -371,8 +443,17 @@ class ModeSnap:
         return {label: self.cfg[kunci] for label, (kunci, states) in HOLD_GESTUR.items()
                 if self.ctrl.state in states}
 
+    def _terus(self) -> Dict[str, float]:
+        """Held gestures active in the current state: label -> minimum hold seconds."""
+        if not self.hold_aktif:
+            return {}
+        return {label: (self.cfg[kunci] if kunci else 0.0) for label, (kunci, states) in TERUS_GESTUR.items()
+                if self.ctrl.state in states}
+
     def butuh_tangan(self) -> bool:
-        return self.ctrl.state == SnapController.LIVE or bool(self._holds())
+        # The snap works in LIVE (vanish) and INVISIBLE (reappear), with or without the gesture model.
+        return (self.ctrl.state in (SnapController.LIVE, SnapController.INVISIBLE)
+                or bool(self._holds()) or bool(self._terus()))
 
     def masuk(self, now: float) -> None:
         self.ctrl.reset(now)
@@ -383,7 +464,8 @@ class ModeSnap:
             self.mode_trigger = "GESTUR"
 
     def keluar(self, now: float) -> None:
-        self.ctrl.reset(now)
+        self.ctrl.reset(now, pudar=False)
+        self.bantuan = False
 
     def tutup(self) -> None:
         if self.audio is not None:
@@ -437,6 +519,16 @@ class ModeSnap:
             # Back in LIVE, proses resets the inputs like after any effect.
             self.ctrl.reset(now)
             self.ctrl.set_pesan("Cancelled", now)
+        elif label == "Open_Palm":
+            self._picu(now, None)
+        elif label == "Victory":
+            self.ctrl.ganti_gaya(now)
+        elif label == "ILoveYou":
+            self.ganti_bantuan(now)
+
+    def ganti_bantuan(self, now: float) -> None:
+        self.bantuan = not self.bantuan
+        self.t_bantuan = now
 
     def _perbarui_tahan(self, now: float, daftar: List[np.ndarray], hasil_tangan, lebar: int) -> None:
         tangan = []  # type: List[Tuple[np.ndarray, str, float, bool]]
@@ -446,9 +538,10 @@ class ModeSnap:
             siap = any(j["lm"] is lm and j["state"] == SnapGestureDetector.SIAP for j in self.gestur.tangan)
             tangan.append((lm, label, skor, siap))
         self._tangan = tangan
-        for label, pusat in self.tahan.update(now, tangan, self._holds(), {}, lebar):
+        for label, pusat in self.tahan.update(now, tangan, self._holds(), self._terus(), lebar):
             self._aksi_tahan(label, pusat, now)
         self._cincin = self.tahan.progress()
+        self.ctrl.atur_waktu("Closed_Fist" in self.tahan.held, "Pointing_Up" in self.tahan.held)
 
     def proses(self, now: float, frame, hasil_tangan, ts: int):
         """Frame akhir tanpa HUD. hasil_tangan None jika landmarker tidak dijalankan."""
@@ -469,6 +562,8 @@ class ModeSnap:
                 self.ctrl.set_pesan(pesan, now, self.cfg["pesan_detik"] * 2)
         gestur = []  # type: List[Tuple[float, Tuple[float, float]]]
         self._tangan, self._cincin = [], []
+        # Time control only lasts while a fist or pointing hand is seen this frame.
+        self.ctrl.atur_waktu(False, False)
         if hasil_tangan is not None:
             daftar = [np.array([(p.x * w, p.y * h) for p in tangan], dtype=np.float32)
                       for tangan in hasil_tangan.hand_landmarks]
@@ -513,6 +608,10 @@ class ModeSnap:
                 self.audio.mulai_kalibrasi(now)
         elif huruf == "d":
             self.debug = (self.debug + 1) % len(DEBUG_VIEWS)
+        elif huruf == "x":
+            self.ctrl.ganti_gaya(now)
+        elif huruf == "h":
+            self.ganti_bantuan(now)
         elif huruf == "r":
             self.ctrl.reset(now)
             self._mulai_ulang_input()
@@ -564,8 +663,9 @@ class ModeSnap:
             self.prof.window, "  ".join(self.prof.summary()), self.prof.total())
         tulis(img, tahap, (10, y + 10), skala_muat(tahap, w - 20, 0.5))
         if self.ctrl.state not in (SnapController.LIVE, SnapController.PLATE_CAPTURE):
-            tulis(img, "t efek = %.2f s  butir %d  ukuran %d px" % (
-                self.ctrl.waktu_efek(now), self.ctrl.butir_tampil, self.ctrl.ukuran_butir), (10, y + 40), 0.5)
+            tulis(img, "t efek = %.2f s  rate %.2f  butir %d  ukuran %d px  style %s" % (
+                self.ctrl.waktu_efek(now), self.ctrl.jam.rate, self.ctrl.butir_tampil, self.ctrl.ukuran_butir,
+                self.ctrl.gaya), (10, y + 40), 0.5)
 
     def gambar_peta(self, img, view: str) -> None:
         """Semi transparent map of one engine stage over the frame."""
@@ -608,8 +708,8 @@ class ModeSnap:
             self.gambar_debug(img, now)
         elif view != "off":
             self.gambar_peta(img, view)
-        status = "Mode SNAP  |  State %s  |  Trigger %s  |  %s  |  %d FPS" % (
-            self.ctrl.state, self.mode_trigger, self.ctrl.status_bg(), int(round(fps)))
+        status = "Mode SNAP  |  State %s  |  Style %s  |  Trigger %s  |  %s  |  %d FPS" % (
+            self.ctrl.state, STYLE_NAMES[self.ctrl.gaya], self.mode_trigger, self.ctrl.status_bg(), int(round(fps)))
         tulis(img, status, (10, 30), skala_muat(status, w - 120, 0.6), (0, 255, 255))
 
         tengah = ""
@@ -630,6 +730,13 @@ class ModeSnap:
             else:
                 tulis_bawah(img, PETUNJUK_TRIGGER[self.mode_trigger], 2)
         tulis_bawah(img, BANTUAN_SNAP, 1, (200, 200, 200))
+        toast = self.ctrl.toast(now)
+        if toast is not None:
+            hud.toast(img, toast[0], toast[1], self.cfg)
+        k = float(smoothstep((now - self.t_bantuan) / self.cfg["help_fade_s"]))
+        alpha_bantuan = k if self.bantuan else 1.0 - k
+        if alpha_bantuan > 0.0:
+            hud.kartu_bantuan(img, BANTUAN_KARTU, alpha_bantuan, self.cfg)
         for pusat, bagian in self._cincin:
             hud.cincin_tahan(img, pusat, bagian, self.cfg)
         if self._denyut is not None and not hud.denyut(img, self._denyut[1], now - self._denyut[0], self.cfg):
@@ -715,6 +822,7 @@ def main() -> int:
     segmenter = None
     snap = None  # type: Optional[ModeSnap]
     perekam = PerekamVideo()
+    perekam_png = PerekamPNG()
     profiler = Profiler(CONFIG["profiler_window"])
     try:
         landmarker, deteksi_tangan, hold_aktif, catatan_gestur = buka_model_tangan(CONFIG)
@@ -812,6 +920,7 @@ def main() -> int:
 
             # Rekaman diambil sebelum HUD supaya file bersih dari teks.
             perekam.tulis(tampil, now)
+            perekam_png.tulis(tampil)
             with profiler.stage("hud"):
                 layar = tampil.copy()
                 if mode == "SNAP":
@@ -823,6 +932,8 @@ def main() -> int:
                 if perekam.aktif:
                     cv2.circle(layar, (w - 95, 25), 9, (0, 0, 255), -1)
                     tulis(layar, "REC", (w - 78, 33), 0.7, (0, 0, 255), 2)
+                if perekam_png.aktif:
+                    tulis(layar, "PNG %d" % perekam_png.ditulis, (w - 150, 63), 0.6, (0, 0, 255), 2)
 
             with profiler.stage("display"):
                 cv2.imshow(JENDELA, layar)
@@ -834,6 +945,11 @@ def main() -> int:
             if not jendela_terbuka():
                 break
             if key == 255:
+                continue
+            # Shift+V must be checked before lowercasing, or it would act like V.
+            if chr(key) == "V":
+                pesan_umum = perekam_png.berhenti() if perekam_png.aktif else perekam_png.mulai()
+                pesan_umum_sampai = now + CONFIG["pesan_detik"] * 2
                 continue
             huruf = chr(key).lower()
             if huruf == "q":
@@ -859,6 +975,7 @@ def main() -> int:
         return 0
     finally:
         perekam.berhenti()
+        perekam_png.berhenti()
         if snap is not None:
             snap.tutup()
         if cap is not None:

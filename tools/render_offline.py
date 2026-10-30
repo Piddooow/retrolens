@@ -49,7 +49,8 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser.add_argument("--out", required=True, help="output folder")
     parser.add_argument("--bg", help="video of the empty room, fed first so the background is learned")
     parser.add_argument("--snap-at", type=float, action="append", default=[],
-                        help="snap time in seconds from the start of INPUT (repeatable)")
+                        help="snap time in seconds from the start of INPUT (repeatable); a snap while "
+                             "invisible makes the person reappear")
     parser.add_argument("--origin", help="flash origin as x,y in 0..1 (default: CONFIG fallback)")
     parser.add_argument("--seed", type=int, help="override debu_seed")
     parser.add_argument("--fps", type=float, default=30.0, help="fixed clock rate (default 30)")
@@ -136,10 +137,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             # The key is handled after the frame is shown, exactly like the live loop.
             while pending and t_input + 1e-9 >= pending[0]:
                 at = pending.pop(0)
+                before = ctrl.state
                 started = ctrl.picu(now, origin) if origin is not None else None
                 if started is None:
                     snap.tombol("s", now)
-                    started = ctrl.state == SnapController.SNAP
+                    # A snap vanishes from LIVE and reappears from INVISIBLE.
+                    started = ctrl.state != before and ctrl.state in (SnapController.VANISH,
+                                                                       SnapController.REAPPEAR)
                 meta["triggers"].append({"requested_t": at, "t": round(t_input, 6), "clock": round(now, 6),
                                          "started": bool(started), "message": ctrl.pesan(now)})
                 print("snap at %.3f s: %s %s" % (t_input, "started" if started else "refused", ctrl.pesan(now)))

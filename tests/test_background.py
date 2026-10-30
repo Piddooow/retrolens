@@ -138,6 +138,30 @@ class TestBackgroundEngine(unittest.TestCase):
                 self.assertAlmostEqual(float(added.std()), live_sigma, delta=0.15 * live_sigma)
                 self.assertTrue(np.array_equal(view[~zone], adj[~zone]))
 
+    def test_pause_restarts_the_frame_history(self):
+        eng = BackgroundEngine(CFG)
+        scene = room(4)
+        eng.set_plate(scene)
+        rng = np.random.default_rng(3)
+        empty = np.zeros((LH, LW), dtype=np.float32)
+        t = 0.0
+        for _ in range(40):
+            t += DT
+            eng.update(t, noisy(scene, rng, 2.0), empty)
+        before = eng.sigma.copy()
+        self.assertTrue(eng.safe.all())
+        # After a pause the scene looks different (the person moved, light changed); that pair is not noise.
+        t += 3.0
+        other = cv2.convertScaleAbs(scene, alpha=1.3)
+        eng.update(t, noisy(other, rng, 2.0), empty)
+        self.assertTrue(np.array_equal(eng.sigma, before))
+        self.assertFalse(eng.safe.any())
+        for _ in range(CFG["bg_safe_frames"]):
+            t += DT
+            eng.update(t, noisy(other, rng, 2.0), empty)
+        self.assertTrue(eng.safe.all())
+        self.assertAlmostEqual(float(eng.sigma.mean()), 2.0, delta=0.3)
+
     def test_noise_off_returns_plate_exactly(self):
         eng = BackgroundEngine(dict(CFG, bg_noise_on=False))
         scene = room(4)
@@ -244,7 +268,7 @@ class TestCoverageGate(unittest.TestCase):
         ctrl = self.controller(1.0)
         self.assertTrue(ctrl.bg_siap)
         self.assertTrue(ctrl.picu(0.1))
-        self.assertEqual(ctrl.state, ctrl.SNAP)
+        self.assertEqual(ctrl.state, ctrl.VANISH)
 
 
 if __name__ == "__main__":

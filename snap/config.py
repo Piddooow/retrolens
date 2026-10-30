@@ -35,6 +35,9 @@ CONFIG = {
     "gesture_cooldown_s": 0.6,
     "hold_thumb_up_s": 1.0,
     "hold_thumb_down_s": 1.0,
+    "hold_palm_s": 1.0,
+    "hold_victory_s": 0.8,
+    "hold_love_s": 1.0,
     # The snap release looks like a fist for under 0.2 s, so a fist only counts after this long.
     "hold_fist_min_s": 0.25,
 
@@ -96,6 +99,8 @@ CONFIG = {
     "bg_noise_tiles": 8,
     "bg_noise_tile_px": 256,
     "bg_noise_update_s": 1.0,
+    # A longer pause between two updates breaks the chain of consecutive frames.
+    "bg_frame_gap_s": 0.25,
     "bg_coverage_min": 0.995,
     "allow_inpaint_fallback": False,
     "inpaint_pad_px": 32,
@@ -169,6 +174,34 @@ CONFIG = {
     "dust_gain": 1.6,
     "max_particle_step_px": 12,
 
+    # reappear (dust flies back), seconds from the trigger; auto_reappear_s 0 means off
+    "reappear_sweep_s": 1.2,
+    "reappear_life_s": 1.0,
+    "reappear_blend_s": 0.3,
+    "auto_reappear_s": 0.0,
+    "cancel_fade_s": 0.4,
+    "reveal_fade_s": 0.4,
+
+    # time control during the dissolve and reappear
+    "slow_rate": 0.3,
+    "rate_tau_s": 0.2,
+
+    # effect styles
+    "style_default": "DUST",
+    "ash_color": "#4A4744",
+    "ash_wind_scale": 0.7,
+    "ash_drift": 0.01,
+    "ember_glow": "#FF8A3D",
+    "ember_particle": "#FFB070",
+    "ember_glow_px": 3,
+    "ember_glow_strength": 0.6,
+    "style_toast_s": 1.2,
+
+    # help card
+    "help_alpha": 0.65,
+    "help_radius_px": 16,
+    "help_fade_s": 0.25,
+
     # abu melayang
     "abu_ambient": True,
     "abu_jumlah": 150,
@@ -181,8 +214,6 @@ CONFIG = {
     "abu_selesai_detik": 4.33,
 
     # linimasa
-    "kosong_detik": 2.0,
-    "kembali_detik": 0.5,
     "pesan_detik": 1.5,
 
     # performa
@@ -198,6 +229,7 @@ CONFIG = {
 }
 
 MODE_TRIGGER = ("GESTUR", "SUARA", "ATAU", "DAN")
+STYLES = ("DUST", "ASH", "EMBER")
 # Frame rate at which motion limits such as max_particle_step_px are defined.
 REFERENCE_FPS = 30
 
@@ -211,15 +243,17 @@ _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_ma
               "profiler_window", "bg_safe_margin_px", "bg_safe_frames", "bg_median_step",
               "bg_known_samples", "bg_auto_capture_frames", "bg_moved_confirm", "bg_noise_tiles",
               "bg_noise_tile_px", "zone_dilate_px", "inpaint_pad_px", "matte_radius", "shadow_ring_px",
-              "shadow_close_px", "max_particle_step_px", "ring_radius_px", "ring_pulse_px", "ring_stroke_px")
+              "shadow_close_px", "max_particle_step_px", "ring_radius_px", "ring_pulse_px", "ring_stroke_px",
+              "ember_glow_px", "help_radius_px")
 _KUNCI_PECAHAN = ("bg_safe_conf", "bg_absent_frac", "bg_phase_min_response", "bg_moved_min_known",
                   "bg_coverage_min", "coverage_tint_alpha", "bg_gain_min_weight", "matte_eps", "matte_scale",
                   "matte_floor", "matte_on", "matte_keep", "shadow_ratio_max", "shadow_chroma_max",
                   "debug_alpha", "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
                   "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks", "fine_noise_weight",
-                  "hold_min_score", "hold_agree_frac", "ring_alpha")
-_KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna")
+                  "hold_min_score", "hold_agree_frac", "ring_alpha", "slow_rate", "ash_wind_scale", "ash_drift",
+                  "ember_glow_strength", "help_alpha")
+_KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna", "ash_color", "ember_glow", "ember_particle")
 _KUNCI_TABEL = ("flash_naik_tabel", "flash_turun_tabel")
 _KUNCI_GRID = ("bg_moved_grid", "bg_gain_grid")
 
@@ -230,7 +264,7 @@ def hex_ke_bgr(warna: str) -> np.ndarray:
 
 def particle_step_px(cfg: Dict[str, Any]) -> float:
     """Upper bound of one particle's move per frame at REFERENCE_FPS on the camera frame size."""
-    life, jit = cfg["debu_umur_detik"], cfg["debu_jitter_maks"]
+    life, jit = max(cfg["debu_umur_detik"], cfg["reappear_life_s"]), cfg["debu_jitter_maks"]
     vx = (cfg["debu_angin_kiri"] + cfg["debu_percepatan_kiri"] * life) * cfg["kamera_lebar"] * jit
     vy = ((cfg["debu_angin_naik"] + cfg["debu_percepatan_naik"] * life) * cfg["kamera_tinggi"] * jit
           + 2.0 * math.pi * cfg["debu_goyang_hz"] * cfg["debu_goyang_px"])
@@ -255,13 +289,14 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
         if not isinstance(cfg[k], int) or isinstance(cfg[k], bool):
             salah.append("%s harus bilangan bulat" % k)
     for k, v in cfg.items():
-        if k in _KUNCI_BOOL or k in _KUNCI_WARNA or k in _KUNCI_TABEL or k in ("mode_trigger", "gesture_model"):
+        if (k in _KUNCI_BOOL or k in _KUNCI_WARNA or k in _KUNCI_TABEL
+                or k in ("mode_trigger", "gesture_model", "style_default")):
             continue
         if k in ("debu_oktaf", "flash_asal_cadangan") or k in _KUNCI_GRID:
             continue
         if not _angka(v):
             salah.append("%s harus angka" % k)
-        elif k == "kamera_indeks" or k == "debu_seed":
+        elif k in ("kamera_indeks", "debu_seed", "auto_reappear_s"):
             if v < 0:
                 salah.append("%s tidak boleh negatif" % k)
         elif v <= 0:
@@ -290,6 +325,8 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
 
     if not isinstance(cfg["gesture_model"], str) or not cfg["gesture_model"].endswith(".task"):
         salah.append("gesture_model must be a .task file name")
+    if cfg["style_default"] not in STYLES:
+        salah.append("style_default must be one of " + ", ".join(STYLES))
     if cfg["mode_trigger"] not in MODE_TRIGGER:
         salah.append("mode_trigger harus salah satu dari " + ", ".join(MODE_TRIGGER))
     oktaf = cfg["debu_oktaf"]

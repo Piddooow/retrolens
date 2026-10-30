@@ -60,7 +60,7 @@ class TesConfig(unittest.TestCase):
 
     def test_tolak_kunci_hilang(self):
         cfg = dict(CFG)
-        del cfg["kosong_detik"]
+        del cfg["debu_umur_detik"]
         self.assertTrue(se.validasi_config(cfg))
 
 
@@ -126,19 +126,26 @@ class TesLinimasa(unittest.TestCase):
         tampil = np.full((360, 640, 3), 90, dtype=np.uint8)
         self.assertTrue(ctrl.picu(0.0))
         debu_akhir = CFG["debu_mulai_detik"] + CFG["debu_sapuan_detik"] + CFG["debu_umur_detik"]
-        kosong_akhir = debu_akhir + CFG["kosong_detik"]
-        kembali_akhir = kosong_akhir + CFG["kembali_detik"]
+        reappear_akhir = CFG["reappear_sweep_s"] + CFG["reappear_life_s"] + CFG["reappear_blend_s"]
         self.assertAlmostEqual(debu_akhir, 4.33, places=6)
-        self.assertAlmostEqual(kembali_akhir, 6.83, places=6)
-        harapan = ((0.1, "SNAP"), (debu_akhir - SATU_FRAME, "SNAP"), (debu_akhir + SATU_FRAME, "KOSONG"),
-                   (kosong_akhir - SATU_FRAME, "KOSONG"), (kosong_akhir + SATU_FRAME, "KEMBALI"),
-                   (kembali_akhir + SATU_FRAME, "LIVE"))
-        t = 0.0
-        for target, state in harapan:
-            while t < target:
-                t = min(target, t + SATU_FRAME)
-                ctrl.render(t, tampil)
-            self.assertEqual(ctrl.state, state, "t=%.3f" % t)
+        self.assertAlmostEqual(reappear_akhir, 2.5, places=6)
+
+        def jalan(t, harapan):
+            for target, state in harapan:
+                while t < target:
+                    t = min(target, t + SATU_FRAME)
+                    ctrl.render(t, tampil)
+                self.assertEqual(ctrl.state, state, "t=%.3f" % t)
+            return t
+
+        # INVISIBLE lasts until a reappear trigger (auto reappear is off by default).
+        t = jalan(0.0, ((0.1, "VANISH"), (debu_akhir - SATU_FRAME, "VANISH"), (debu_akhir + SATU_FRAME, "INVISIBLE"),
+                        (20.0, "INVISIBLE")))
+        self.assertTrue(ctrl.picu(t))
+        self.assertEqual(ctrl.state, "REAPPEAR")
+        jalan(t, ((t + reappear_akhir - SATU_FRAME, "REAPPEAR"), (t + reappear_akhir + SATU_FRAME, "LIVE")))
+        selesai = t + reappear_akhir + SATU_FRAME
+        self.assertFalse(ctrl.picu(selesai + CFG["cooldown_detik"] - 2 * SATU_FRAME))
 
     def test_live_tampil_sebelum_ganti_lalu_putih(self):
         ctrl, _, _ = controller_siap()
