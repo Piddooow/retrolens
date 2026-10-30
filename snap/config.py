@@ -77,8 +77,24 @@ CONFIG = {
     "bg_coverage_min": 0.995,
     "allow_inpaint_fallback": False,
     "inpaint_pad_px": 32,
-    "zone_dilate_px": 10,
     "coverage_tint_alpha": 0.25,
+
+    # matte and removal zone (display resolution)
+    "matte_radius": 8,
+    "matte_eps": 0.001,
+    "matte_scale": 0.5,
+    "matte_floor": 0.02,
+    "matte_on": 0.5,
+    "matte_keep": 0.3,
+    "zone_dilate_px": 10,
+    "zone_feather_px": 4.0,
+    # Starting values; tune on uji_lokal/v2/sit_still.mp4 once it is recorded.
+    "shadow_on": True,
+    "shadow_ring_px": 80,
+    "shadow_ratio_max": 0.85,
+    "shadow_chroma_max": 0.04,
+    "shadow_close_px": 7,
+    "debug_alpha": 0.45,
     "coverage_tint_fade_s": 0.6,
 
     # segmentasi
@@ -152,7 +168,7 @@ CONFIG = {
 MODE_TRIGGER = ("GESTUR", "SUARA", "ATAU", "DAN")
 
 _KUNCI_BOOL = ("audio_aktif", "latar_live", "abu_ambient", "debu_balik_horizontal", "bg_noise_on",
-               "allow_inpaint_fallback")
+               "allow_inpaint_fallback", "shadow_on")
 _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_maks", "proses_lebar",
               "proses_tinggi", "audio_blocksize", "audio_ring_blok", "audio_kalibrasi_jumlah",
               "plate_hitung_mundur", "plate_jumlah_frame", "mask_kernel",
@@ -160,9 +176,12 @@ _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_ma
               "abu_ukuran_maks", "fps_target", "fps_batas_turun", "fps_jendela_frame", "uji_jumlah_frame",
               "profiler_window", "bg_safe_margin_px", "bg_safe_frames", "bg_median_step",
               "bg_known_samples", "bg_auto_capture_frames", "bg_moved_confirm", "bg_noise_tiles",
-              "bg_noise_tile_px", "zone_dilate_px", "inpaint_pad_px")
+              "bg_noise_tile_px", "zone_dilate_px", "inpaint_pad_px", "matte_radius", "shadow_ring_px",
+              "shadow_close_px")
 _KUNCI_PECAHAN = ("bg_safe_conf", "bg_absent_frac", "bg_phase_min_response", "bg_moved_min_known",
-                  "bg_coverage_min", "coverage_tint_alpha", "bg_gain_min_weight", "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
+                  "bg_coverage_min", "coverage_tint_alpha", "bg_gain_min_weight", "matte_eps", "matte_scale",
+                  "matte_floor", "matte_on", "matte_keep", "shadow_ratio_max", "shadow_chroma_max",
+                  "debug_alpha", "mask_ema_baru", "mask_ambang", "mask_luas_min_komponen", "mask_luas_min_orang",
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
                   "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks")
 _KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna")
@@ -258,6 +277,10 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
             salah.append("%s terlalu besar untuk resolusi proses" % k)
     if cfg["mask_kernel"] % 2 == 0:
         salah.append("mask_kernel harus ganjil")
+    if cfg["shadow_close_px"] % 2 == 0:
+        salah.append("shadow_close_px must be odd")
+    if not cfg["matte_floor"] < cfg["matte_keep"] < cfg["matte_on"]:
+        salah.append("matte values must satisfy matte_floor < matte_keep < matte_on")
     # Pergantian ke frame beku harus terjadi saat seluruh layar sudah putih penuh.
     if cfg["flash_tunda_ujung_detik"] >= cfg["flash_tahan_detik"]:
         salah.append("flash_tunda_ujung_detik harus lebih kecil dari flash_tahan_detik")

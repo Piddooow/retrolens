@@ -21,6 +21,8 @@ FOLDER_REKAMAN = os.path.join(FOLDER, "rekaman")
 BANTUAN_SNAP = "M mode, B background, S snap, T trigger, K kalibrasi, D debug, V rekam, R reset, Q keluar"
 BANTUAN_RETROLENS = "M mode SNAP, V rekam, Q keluar"
 WARNA_TINT = (235, 175, 90)
+# The D key cycles through these views.
+DEBUG_VIEWS = ("off", "stats", "matte", "zone", "coverage", "gain")
 PETUNJUK_TRIGGER = {
     "GESTUR": "Jentikkan jari (jempol + jari tengah) di depan kamera, atau tekan S",
     "SUARA": "Jentikkan jari sampai terdengar, atau tekan S",
@@ -244,6 +246,12 @@ def tulis(img, teks: str, pos: Tuple[int, int], skala: float = 0.6, warna=(255, 
     cv2.putText(img, teks, (x, y), font, skala, warna, tebal, cv2.LINE_AA)
 
 
+def tumpuk(img, peta, warna, opacity: float) -> None:
+    """Blend a solid color over img in place, weighted per pixel by peta (0..1 or bool)."""
+    a = peta.astype(np.float32) * np.float32(opacity)
+    img[:] = cv2.blendLinear(img, np.full_like(img, warna), 1.0 - a, a)
+
+
 def skala_muat(teks: str, lebar_maks: int, skala: float, tebal: int = 1) -> float:
     (lebar_teks, _), _ = cv2.getTextSize(teks, cv2.FONT_HERSHEY_SIMPLEX, skala, tebal)
     return skala if lebar_teks <= lebar_maks else skala * lebar_maks / float(lebar_teks)
@@ -324,12 +332,13 @@ class ModeSnap:
         self.cfg = cfg
         self.seg = segmenter
         self.ctrl = SnapController(cfg)
+        self.ctrl.prof = profiler
         self.gestur = SnapGestureDetector(cfg)
         self.pemicu = PemicuGabungan(cfg)
         self.audio = None  # type: Optional[AudioSnapDetector]
         self.audio_gagal = False
         self.mode_trigger = cfg["mode_trigger"]
-        self.debug = False
+        self.debug = 0
         self.state_lalu = SnapController.LIVE
         self.prof = profiler
         self.t_fps_rendah = None  # type: Optional[float]
@@ -354,6 +363,7 @@ class ModeSnap:
         self.gestur.reset()
         self.pemicu.reset()
         self.seg.reset()
+        self.ctrl.matte.reset()
 
     def _pastikan_audio(self, now: float) -> bool:
         if self.audio is not None and self.audio.aktif:
@@ -395,8 +405,8 @@ class ModeSnap:
                 kecil = cv2.resize(frame, (self.cfg["proses_lebar"], self.cfg["proses_tinggi"]),
                                    interpolation=cv2.INTER_AREA)
                 mask = self.seg.perbarui(kecil, ts)
-            with self.prof.stage("background"):
-                self.ctrl.amati(now, frame, kecil, mask)
+            # Times its own matte and background stages.
+            self.ctrl.amati(now, frame, kecil, mask)
 
         self._cek_audio(now)
         audio_aktif = self.audio is not None and self.audio.aktif
@@ -446,7 +456,7 @@ class ModeSnap:
             if self._pastikan_audio(now):
                 self.audio.mulai_kalibrasi(now)
         elif huruf == "d":
-            self.debug = not self.debug
+            self.debug = (self.debug + 1) % len(DEBUG_VIEWS)
         elif huruf == "r":
             self.ctrl.reset(now)
             self._mulai_ulang_input()
@@ -498,6 +508,34 @@ class ModeSnap:
             tulis(img, "t efek = %.2f s  butir %d  ukuran %d px" % (
                 self.ctrl.waktu_efek(now), self.ctrl.butir_tampil, self.ctrl.ukuran_butir), (10, y + 40), 0.5)
 
+    def gambar_peta(self, img, view: str) -> None:
+        """Semi transparent map of one engine stage over the frame."""
+        h, w = img.shape[:2]
+        alpha = self.cfg["debug_alpha"]
+        matte = self.ctrl.matte.matte
+        label = "Debug view: %s  (D for next)" % view
+        if not self.ctrl.butuh_segmentasi() or matte is None or matte.shape != (h, w):
+            tulis(img, label + "  -  shown only while live", (10, 60), 0.55)
+            return
+        if view == "matte":
+            tumpuk(img, matte, (0, 200, 0), alpha)
+        elif view == "zone":
+            zf, shadow = self.ctrl.zona_hapus()
+            tumpuk(img, zf * ~shadow, (200, 0, 200), alpha)
+            tumpuk(img, shadow, (0, 140, 255), alpha)
+            label += "  (orange = shadow)"
+        elif view == "coverage":
+            tumpuk(img, ~self.ctrl.bg.known(), (0, 0, 220), alpha)
+            label += "  (red = room not seen yet, %d%% known)" % int(100 * self.ctrl.bg.known_fraction())
+        elif view == "gain":
+            gain = self.ctrl.peta_gain().mean(axis=2)
+            lo, hi = self.cfg["bg_gain_min"], self.cfg["bg_gain_max"]
+            warna = cv2.applyColorMap(cv2.convertScaleAbs(gain - lo, alpha=255.0 / (hi - lo)), cv2.COLORMAP_VIRIDIS)
+            warna = cv2.resize(warna, (w, h), interpolation=cv2.INTER_LINEAR)
+            cv2.addWeighted(img, 1.0 - alpha, warna, alpha, 0.0, dst=img)
+            label += "  (gain %.2f to %.2f)" % (float(gain.min()), float(gain.max()))
+        tulis(img, label, (10, 60), skala_muat(label, w - 20, 0.55))
+
     def gambar_hud(self, img, now: float, fps: float) -> None:
         h, w = img.shape[:2]
         tint = self.ctrl.tint(now)
@@ -506,8 +544,11 @@ class ModeSnap:
             mask = tint[0].view(np.uint8)
             biru = cv2.addWeighted(img, 1.0 - tint[1], np.full_like(img, WARNA_TINT), tint[1], 0.0)
             cv2.copyTo(biru, mask, img)
-        if self.debug:
+        view = DEBUG_VIEWS[self.debug]
+        if view == "stats":
             self.gambar_debug(img, now)
+        elif view != "off":
+            self.gambar_peta(img, view)
         status = "Mode SNAP  |  State %s  |  Trigger %s  |  %s  |  %d FPS" % (
             self.ctrl.state, self.mode_trigger, self.ctrl.status_bg(), int(round(fps)))
         tulis(img, status, (10, 30), skala_muat(status, w - 120, 0.6), (0, 255, 255))

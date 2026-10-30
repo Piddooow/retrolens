@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import contextlib
 import json
 import math
 import os
@@ -23,6 +24,7 @@ except Exception:  # PortAudio tidak terpasang: mode suara dimatikan, sisanya te
 
 from snap.background import CAPTURE_MESSAGES, CAPTURE_OK, BackgroundEngine, dilate_to  # noqa: E402,F401
 from snap.config import CONFIG, MODE_TRIGGER, validasi_config  # noqa: E402,F401
+from snap.matte import MatteEngine  # noqa: E402
 
 MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds, then snap again"
 MSG_ESTIMATED = "Background estimated, result may not be perfect"
@@ -337,6 +339,9 @@ class SnapController:
         lebar, tinggi = cfg["proses_lebar"], cfg["proses_tinggi"]
         self.lebar, self.tinggi = lebar, tinggi
         self.bg = BackgroundEngine(cfg)
+        self.matte = MatteEngine(cfg)
+        # Optional snap.profiler.Profiler; the app sets it to time the matte and background stages.
+        self.prof = None  # type: Any
         self.bg_siap = False
         self.bg_persen = 0
         self.flash = FlashOverlay(cfg, lebar, tinggi)
@@ -370,6 +375,7 @@ class SnapController:
         self._beku = None  # type: Optional[np.ndarray]
         self._beku_tampil = None  # type: Optional[np.ndarray]
         self._zona = None  # type: Optional[np.ndarray]
+        self._zf = None  # type: Optional[np.ndarray]
         self._perkiraan = False
         self._biner = None  # type: Optional[np.ndarray]
         self._conf_beku = None  # type: Optional[np.ndarray]
@@ -396,30 +402,43 @@ class SnapController:
     def sisa_hitung_mundur(self, now: float) -> int:
         return max(0, int(math.ceil(self.t_rekam - now)))
 
-    def _zona_orang(self, mask: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-        return dilate_to(mask > self.cfg["mask_ambang"], self.cfg["zone_dilate_px"], size)
+    def _tahap(self, nama: str) -> Any:
+        return self.prof.stage(nama) if self.prof is not None else contextlib.nullcontext()
 
     def amati(self, now: float, frame_tampil: np.ndarray, frame_proses: np.ndarray, mask: np.ndarray) -> None:
         """Latest display frame, its process size copy, and the person mask (LIVE or PLATE_CAPTURE only)."""
         self._frame_tampil = frame_tampil
         self._frame = frame_proses
         self._mask = mask
-        if self.state == self.LIVE:
-            for teks in self.bg.update(now, frame_tampil, mask):
-                self.set_pesan(teks, now, self.cfg["pesan_detik"] * 2)
-        elif self.state == self.PLATE_CAPTURE:
-            if now < self.t_rekam:
-                self.bg.update(now, frame_tampil, mask, allow_auto=False)
-            else:
-                hasil = self.bg.capture_frame(frame_tampil, mask)
-                if hasil is not None:
-                    self.set_pesan(CAPTURE_MESSAGES[hasil], now, self.cfg["pesan_detik"] * 2)
-                    self._masuk_live(now)
-        h, w = frame_tampil.shape[:2]
-        zona = self._zona_orang(mask, (w, h))
-        cakupan = self.bg.coverage(zona) if zona.any() else self.bg.known_fraction()
-        self.bg_siap = cakupan >= self.cfg["bg_coverage_min"]
-        self.bg_persen = int(math.floor(100.0 * cakupan))
+        with self._tahap("matte"):
+            self.matte.update(frame_tampil, mask)
+            zona = self.matte.core()
+        with self._tahap("background"):
+            if self.state == self.LIVE:
+                for teks in self.bg.update(now, frame_tampil, mask):
+                    self.set_pesan(teks, now, self.cfg["pesan_detik"] * 2)
+            elif self.state == self.PLATE_CAPTURE:
+                if now < self.t_rekam:
+                    self.bg.update(now, frame_tampil, mask, allow_auto=False)
+                else:
+                    hasil = self.bg.capture_frame(frame_tampil, mask)
+                    if hasil is not None:
+                        self.set_pesan(CAPTURE_MESSAGES[hasil], now, self.cfg["pesan_detik"] * 2)
+                        self._masuk_live(now)
+            # The shadow part never lowers coverage (it is only added where known), so the core is enough here.
+            cakupan = self.bg.coverage(zona) if zona.any() else self.bg.known_fraction()
+            self.bg_siap = cakupan >= self.cfg["bg_coverage_min"]
+            self.bg_persen = int(math.floor(100.0 * cakupan))
+
+    def zona_hapus(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Removal zone of the latest frame: feathered Zf (float 0..1) and its shadow part (bool)."""
+        frame = self._frame_tampil
+        return self.matte.zone(frame, self.bg.plate_adj(frame), self.bg.known())
+
+    def peta_gain(self) -> np.ndarray:
+        """Exposure and color gain map (grid size, 3 channels) for the latest frame."""
+        self.bg.plate_adj(self._frame_tampil)
+        return self.bg.gain_small
 
     def status_bg(self) -> str:
         return "BG READY" if self.bg_siap else "BG LEARNING %d%%" % self.bg_persen
@@ -454,8 +473,8 @@ class SnapController:
         if luas < self.cfg["mask_luas_min_orang"]:
             self.set_pesan("Tidak ada orang terdeteksi", now)
             return False
-        h, w = self._frame_tampil.shape[:2]
-        zona = self._zona_orang(self._mask, (w, h))
+        zf, _ = self.zona_hapus()
+        zona = zf > 0.0
         # Coverage gate: never vanish over background that was not seen.
         perkiraan = self.bg.coverage(zona) < self.cfg["bg_coverage_min"]
         if perkiraan and not self.cfg["allow_inpaint_fallback"]:
@@ -468,6 +487,7 @@ class SnapController:
         self._beku = self._frame.copy()
         self._beku_tampil = self._frame_tampil.copy()
         self._zona = zona
+        self._zf = zf
         self._perkiraan = perkiraan
         self._biner = biner
         self._conf_beku = self._mask.copy()
@@ -516,8 +536,8 @@ class SnapController:
     def info_kualitas(self, lebar: int, tinggi: int) -> Dict[str, Any]:
         """Data for tools/measure_quality.py at display size; entries are None when not available."""
         info = {"zone": None, "plate_view": None, "mass": None, "step_px": None}  # type: Dict[str, Any]
-        if self._biner is not None:
-            info["zone"] = cv2.resize(self._biner.astype(np.uint8) * 255, (lebar, tinggi),
+        if self._zona is not None:
+            info["zone"] = cv2.resize(self._zona.view(np.uint8) * np.uint8(255), (lebar, tinggi),
                                       interpolation=cv2.INTER_NEAREST)
         if self._plate_f is not None:
             info["plate_view"] = cv2.resize(cv2.convertScaleAbs(self._plate_f), (lebar, tinggi),
