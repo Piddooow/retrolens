@@ -1,4 +1,6 @@
-opencv-contrib-python
-mediapipe
-numpy
-sounddevice
+# Tested with Python 3.9 on macOS (Apple silicon).
+# Do not also install opencv-python: it shares the cv2 module and has no ximgproc, which SNAP mode needs.
+opencv-contrib-python==5.0.0.93
+mediapipe==1.0.0
+numpy==2.0.2
+sounddevice==0.5.5

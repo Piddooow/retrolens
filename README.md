@@ -2,7 +2,7 @@
 
 Aplikasi filter kamera interaktif menggunakan gesture tangan (hand tracking) dengan MediaPipe dan OpenCV. Anda dapat membuat "portal" dengan jari Anda yang akan menerapkan berbagai filter menarik (Mono, Dual-Tone, Pixelate, Invert, Sepia, Blur, Thermal, Sketch, Glitch, Neon, Galaxy).
 
-Ada juga **mode SNAP**: jentikkan jari di depan kamera, layar menyala putih kebiruan dari tangan Anda, lalu tubuh Anda hancur menjadi debu dari kepala ke bawah dan terbawa angin, menyisakan background kosong. Penjelasan lengkap ada di bagian [Mode SNAP](#mode-snap).
+There is also a **SNAP mode**: snap your fingers and you turn into dust and vanish, with the room behind you showing through. Snap again to come back. See [SNAP mode](#snap-mode).
 
 ## Persyaratan Sistem
 - Python 3.9 atau lebih baru
@@ -83,96 +83,115 @@ python main.py --snap
 - **Pindah ke Mode SNAP:** tekan **`m`**.
 - **Menutup Aplikasi:** Pastikan jendela kamera/Retrolens sedang aktif (diklik), kemudian tekan tombol **`q`** pada keyboard Anda untuk keluar dari aplikasi. Menutup jendela dengan tombol merah juga bisa.
 
-## Mode SNAP
+## SNAP mode
 
-### Mulai cepat
-1. Jalankan `python main.py --snap`.
-2. Duduk atau berdiri di depan kamera sampai kepala dan bahu terlihat.
-3. Tempelkan ujung jempol ke ujung jari tengah, tahan sebentar, lalu jentikkan sampai jari tengah memukul telapak tangan.
+### What it does
 
-Layar menyala putih, tubuh Anda hancur jadi debu, background terlihat selama 2 detik, lalu kamera kembali normal. Jika jentikan belum terdeteksi, tekan **`S`** atau **Spasi** untuk snap manual.
+Snap your fingers and you turn into dust and vanish. The room behind you shows through as if you were never there. Snap again or show your open palm to come back.
 
-### Supaya background bersih
-Saat Anda menghilang, aplikasi harus tahu seperti apa background di belakang Anda. Ada dua cara:
+### One time setup
 
-- **Otomatis.** Aplikasi terus mempelajari bagian background yang terlihat. Persentasenya tampil di pojok kiri atas, misalnya `BG OTOMATIS 82%`. Bagian yang belum pernah terlihat (biasanya tepat di belakang badan) diisi tebakan, jadi terlihat seperti noda. Bergeser sedikit ke kiri dan kanan sebelum snap akan menaikkan persentasenya.
-- **Manual (hasil terbaik).** Tekan **`B`**, lalu keluar dari frame selama hitung mundur 3 detik. Aplikasi merekam 30 frame background kosong. Status berubah menjadi `BG TERSIMPAN`.
+1. Open Terminal in the project folder and activate the environment: `source venv/bin/activate`
+2. Install packages: `pip install -r requirements.txt`
+3. Download the gesture model into the project folder (one time):
+   ```bash
+   curl -L -o gesture_recognizer.task https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task
+   ```
+   If that link ever fails, get the file from the Models section of the official MediaPipe Gesture Recognizer page. Without it the app still runs, but only the snap gesture works.
+4. Allow camera and microphone for your Terminal app in System Settings, Privacy and Security. macOS gives the permission to the terminal app (Terminal, iTerm, VS Code), not to Python. Quit and reopen the terminal after changing it.
+5. Start: `python main.py --snap`
 
-Rekaman background ditolak jika masih ada orang di frame atau jika gambarnya tidak cocok dengan kamera (misalnya kamera ditutup tangan). Kamera harus diam. Jika kamera bergeser setelah background direkam, aplikasi mendeteksinya saat snap, kembali ke background otomatis, dan meminta Anda menekan `B` lagi.
+### How to use
 
-### Tombol
+1. **Place the camera somewhere stable.** It must not move during use.
+2. **Let it learn the room.** Step out of the frame for 2 seconds. The status shows "Ready" in green when it is done. You can also show a thumbs up for 1 second (or press B) and step out during the countdown.
+3. **Sit or stand in front of the camera.**
+4. **Snap your fingers** (thumb and middle finger). You vanish into dust.
+5. **Walk around while invisible.** You stay invisible.
+6. **Come back:** snap again, or hold your open palm toward the camera for 1 second.
 
-| Tombol | Fungsi |
-| --- | --- |
-| `M` | Ganti mode RETROLENS dan SNAP |
-| `B` | Rekam background kosong (hitung mundur 3 detik) |
-| `S` atau Spasi | Snap manual |
-| `T` | Ganti mode trigger: GESTUR, SUARA, ATAU, DAN |
-| `K` | Kalibrasi suara jentikan |
-| `D` | Overlay debug |
-| `V` | Mulai atau berhenti merekam layar |
-| `R` | Paksa kembali ke kamera live |
-| `Q` | Keluar |
+Gestures:
 
-Huruf besar dan kecil sama saja.
+* Snap: vanish, or come back when invisible
+* Open palm, 1 s: come back
+* Thumbs up, 1 s: learn the room again
+* Peace sign, 1 s: change style (Dust, Ash, Ember)
+* Fist, hold: freeze time during the effect
+* Pointing up, hold: slow motion during the effect
+* Rock sign (thumb, index, and pinky up), 1 s: show or hide help
+* Thumbs down, 1 s: cancel and go back to normal
 
-### Mode trigger
-- **GESTUR** (bawaan): hanya gerakan tangan. Mikrofon tidak dipakai sama sekali.
-- **SUARA**: hanya bunyi jentikan. Lakukan kalibrasi dulu.
-- **ATAU**: gerakan atau bunyi, salah satu cukup.
-- **DAN**: gerakan dan bunyi harus terjadi dalam 0.25 detik. Paling tahan salah picu, misalnya saat Anda banyak bergerak atau ada orang bertepuk tangan.
+A ring around your hand fills up while you hold a gesture. When it is full, the action happens. Freeze and slow motion work once the white flash has faded, and they ease in and out instead of stopping at once.
 
-Bunyi lain yang tajam, seperti tepukan atau ketukan meja, juga bisa terdeteksi sebagai jentikan. Karena itu SUARA saja kurang andal; gunakan DAN jika butuh trigger suara.
+Keys: M mode, S or Space snap, B learn room, X style, H help, T trigger mode, K sound calibration, D debug, V record, Shift+V save frames, R reset, Q quit.
 
-### Kalibrasi suara
-1. Tekan **`K`** di mode SNAP.
-2. Diam selama 2 detik saat layar menulis "diam sebentar".
-3. Jentikkan jari 3 kali dalam 6 detik.
+### Snap by sound
 
-Ambang suara disimpan ke `snap_kalibrasi.json` dan dimuat otomatis setiap kali aplikasi dibuka. Selama kalibrasi, jentikan tidak memicu efek. Ulangi kalibrasi jika Anda pindah ruangan atau ganti mikrofon.
+Press T to choose what counts as a snap: gesture (the default, the microphone is not used), sound, gesture or sound, or gesture and sound (both within 0.25 s, the hardest to trigger by accident). Other sharp sounds such as clapping can also count as a snap, so sound alone is the least reliable.
 
-### Izin kamera dan mikrofon di macOS
-macOS memberi izin ke aplikasi terminal yang menjalankan Python (Terminal, iTerm, VS Code, dan sebagainya), bukan ke Python itu sendiri.
+For sound, press K once: stay quiet for 2 seconds, then snap 3 times within 6 seconds. The result is saved in `snap_kalibrasi.json` and loaded every time. Do it again after moving to another room or changing microphones. If macOS blocks the microphone it sends silence without an error, so the app shows "The microphone hears nothing".
 
-- Kamera: System Settings, Privacy & Security, Camera. Aktifkan untuk aplikasi terminal Anda.
-- Mikrofon: System Settings, Privacy & Security, Microphone. Aktifkan untuk aplikasi terminal Anda.
+### Recording
 
-Tutup dan buka lagi terminal setelah mengubah izin. Jika izin mikrofon ditolak, macOS mengirim suara kosong tanpa pesan error, jadi aplikasi menampilkan "Mikrofon diam" di layar. Jika mikrofon tidak ada atau terputus, aplikasi tetap berjalan dengan mode GESTUR.
+* **V** records the effect to `rekaman/snap_DATE_TIME.mp4` (H.264 when available). The status pill shows REC.
+* **Shift+V** saves every shown frame as a lossless PNG in `rekaman/frames_DATE_TIME/`, for checking the effect frame by frame.
 
-### Overlay debug (`D`)
-Menampilkan mask orang berwarna hijau, titik tangan 0, 4, 9, 12, nilai `cubit` dan `tengah` beserta state tiap tangan (DIAM, SIAP, JENTIK), level suara terhadap ambang, waktu proses tiap tahap dalam milidetik, dan waktu efek yang sedang berjalan.
+Recordings never contain the status pill, hints, help card, or debug views.
 
-Jika jentikan Anda sering tidak terdeteksi, perhatikan angkanya:
-- `cubit` harus turun di bawah 0.35 selama 0.2 detik (state berubah menjadi SIAP).
-- Saat lepas, `cubit` harus naik di atas 0.45 dan `tengah` turun minimal 30% dalam 0.12 detik.
+### If something looks wrong
 
-Semua ambang ada di `CONFIG` di `snap_effect.py` (`cubit_masuk`, `cubit_lepas`, `tengah_turun_min`, dan lainnya). Nilai bawaan disetel dari rekaman jentikan sungguhan: 8 dari 8 jentikan terdeteksi dan tidak ada salah picu saat melambai, menunjuk, atau mencubit jempol dengan telunjuk.
+* **"I still need to see the room behind you":** step out of the frame for 2 seconds, then snap again. A light blue tint shows which part is still missing.
+* **"Camera moved":** keep the camera still and step out for a moment so it can relearn the room.
+* **"I can't see behind you there":** you walked onto a part of the room the camera has never seen. That part fades back to the live picture until it is learned. Step aside for a moment so it can see it.
+* **Snap not detected:** snap a little slower with your palm facing the camera, or press D to see the live values.
+* **Low fps:** close other apps that use the camera, and use good lighting. In a dim room the Mac camera itself drops to about 15 to 20 fps.
 
-### Rekam video (`V`)
-Hasilnya tersimpan di `rekaman/snap_TANGGAL_JAM.mp4`. File berisi efek saja, tanpa teks di layar. Titik merah `REC` di pojok kanan atas menandakan sedang merekam. Frame ditulis mengikuti jam, jadi durasi efek di file sama dengan aslinya walaupun FPS naik turun.
+### Debug views (D)
 
-### Tips performa
-Proses efek di MacBook Apple Silicon hanya sekitar 10 sampai 15 ms per frame, jadi kecepatan biasanya dibatasi kamera. Di ruangan redup, webcam Mac bisa menurunkan frame rate ke sekitar 15 sampai 20 fps; cahaya yang lebih terang mengembalikannya ke 30 fps. Jika FPS di bawah 20 selama 2 detik, ukuran butir debu otomatis naik dari 2 ke 3 piksel mulai snap berikutnya.
+D cycles through: off, stats, matte, removal zone, coverage, gain map. Stats shows the hand values (`cubit` must drop below 0.35 for 0.2 s to get ready, then rise above 0.45 while `tengah` drops by at least 30% within 0.12 s), the recognized gesture and score per hand, the sound level, and the time per stage in milliseconds. The other views draw the person matte, the area that is replaced by the room (orange for shadows), the part of the room that has not been seen yet (red), and the exposure match.
 
-### Mode uji tanpa webcam
+All settings live in `CONFIG` in `snap/config.py`, and the app checks them on start.
+
+### Speed
+
+Measured on an Apple silicon MacBook at 1280x720, without drawing the window: 29 to 30 fps in every state, which is the camera's own rate, with the hand and person models running on a background thread. `python tools/benchmark.py CLIP` measures it again; the status pill shows the live value. If the frame rate stays below 24 fps for 2 seconds, the app steps down to cheaper settings one at a time (coarser matte, bigger dust, no dust blur, no shadow removal) and steps back up after 5 seconds above 28 fps. A change is used from the next vanish or reappear on, never in the middle of one.
+
+### For developers
+
 ```bash
-# Pakai file video sebagai input kamera
+# Automatic tests
+python -m unittest discover -s tests
+
+# Use a video file as the camera (record clips with tools/record_clip.py, they are mirrored like the app)
 python main.py --sumber "path/video.mp4" --snap
 
-# Render 9 frame efek (detik 0 sampai 3.2) dari satu foto ke foto_lembar.png
-python snap_effect.py --uji "path/foto.png"
+# Render the effect from a clip without a camera, then check it
+python tools/render_offline.py uji_lokal/v2/sit_snap.mp4 --bg uji_lokal/v2/room_empty.mp4 --snap-at 3 --snap-at 10 --out uji_lokal/render/sit_snap
+python tools/measure_quality.py uji_lokal/render/sit_snap
 
-# Sama, dengan foto background kosong dari sudut kamera yang sama
-python snap_effect.py --uji "path/foto.png" --bg "path/kosong.png"
+# Frame rate per state, the way the app runs
+python tools/benchmark.py uji_lokal/v2/sit_snap.mp4 --bg uji_lokal/v2/room_empty.mp4
 
-# Tes otomatis
-python -m unittest discover -s tests -v
+# Preview sheet of 9 effect frames from one photo (with an optional empty room photo from the same spot)
+python snap_effect.py --uji "path/photo.png" --bg "path/empty.png"
 ```
 
-### Batasan
-- Segmenter tidak bisa memilih satu orang. Semua orang yang terlihat ikut hancur.
-- Selama efek, layar memakai frame beku dan background, bukan kamera live, karena Anda sebenarnya masih berdiri di depan kamera.
-- Arah angin debu ke kiri atas. Ubah `debu_balik_horizontal` di `CONFIG` menjadi `True` untuk ke kanan atas.
+Recording test clips: keep the camera in the same position for all clips, then run these one at a time:
+
+1. `python tools/record_clip.py room_empty 10` (nobody in the frame)
+2. `python tools/record_clip.py sit_still 12` (walk in, sit, stay still)
+3. `python tools/record_clip.py sit_snap 12` (sit, snap twice)
+4. `python tools/record_clip.py move_around 15` (move around the frame)
+5. `python tools/record_clip.py leave_return 12` (leave for 3 s, come back)
+
+### Known limits
+
+1. The room behind you must be seen at least once. Areas never seen cannot be rebuilt, which is why the app asks you to step out instead of guessing.
+2. The person segmenter cannot tell people apart. Everyone in the frame vanishes together.
+3. The room must be still where you stand. Moving things behind you (a TV, a curtain in the wind) can show as a frozen patch while you are invisible.
+4. Light changes during the effect are matched only from 0.7x to 1.4x brightness per color channel. Beyond that, the edge of the hidden area may become visible.
+5. To keep the frame rate up, the picture is shown one camera frame (about 33 ms) late.
+6. The quality measurements for noise and flicker inside the hidden area have only been run on compressed test clips with a stand-in room, where they do not pass yet. They still need real `room_empty` and `sit_snap` recordings.
 
 ---
 **Catatan:** Pastikan ruangan memiliki pencahayaan yang cukup agar deteksi tangan dari kamera dapat bekerja dengan optimal.

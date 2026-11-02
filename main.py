@@ -3,6 +3,7 @@ import collections
 import math
 import os
 import sys
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -330,6 +331,7 @@ class PerekamVideo:
     def __init__(self):
         self.writer = None
         self.path = ""
+        self._penutup = []  # type: List[threading.Thread]
 
     @property
     def aktif(self) -> bool:
@@ -352,7 +354,7 @@ class PerekamVideo:
         self.ukuran = (w, h)
         self.t0 = now
         self.ditulis = 0
-        print("Merekam ke %s (%.1f fps)" % (self.path, self.fps))
+        print("Recording to %s (%.1f fps)" % (self.path, self.fps))
         return "Recording"
 
     def tulis(self, frame, now: float) -> None:
@@ -366,10 +368,24 @@ class PerekamVideo:
     def berhenti(self) -> str:
         if self.writer is None:
             return ""
-        self.writer.release()
+        writer, path = self.writer, self.path
         self.writer = None
-        print("Rekaman disimpan: %s" % self.path)
-        return "Saved to rekaman/%s" % os.path.basename(self.path)
+        # Finishing an H.264 file takes a moment; doing it off the main thread keeps the picture moving.
+        penutup = threading.Thread(target=self._tutup, args=(writer, path), name="recording-close")
+        penutup.start()
+        self._penutup.append(penutup)
+        return "Saved to rekaman/%s" % os.path.basename(path)
+
+    @staticmethod
+    def _tutup(writer, path: str) -> None:
+        writer.release()
+        print("Recording saved: %s" % path)
+
+    def selesai(self) -> None:
+        """Wait until every stopped recording is completely written."""
+        for penutup in self._penutup:
+            penutup.join()
+        self._penutup = []
 
 
 class PerekamPNG:
@@ -832,7 +848,7 @@ class ModeSnap:
 def path_model(nama: str) -> Optional[str]:
     path = os.path.join(FOLDER, nama)
     if not os.path.isfile(path):
-        print("File model '%s' tidak ditemukan. Lokasi yang diharapkan: %s" % (nama, path))
+        print("Model file '%s' not found. Put it here: %s" % (nama, path))
         return None
     return path
 
@@ -919,7 +935,7 @@ def buka_kamera(cfg) -> Tuple[Optional[cv2.VideoCapture], int]:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg["kamera_tinggi"])
             return cap, indeks
         cap.release()
-        print("Kamera indeks %d gagal dibuka." % indeks)
+        print("Camera %d could not be opened." % indeks)
     return None, -1
 
 
@@ -932,9 +948,9 @@ def jendela_terbuka() -> bool:
 
 
 def baca_argumen():
-    parser = argparse.ArgumentParser(description="Retrolens: filter portal dan efek SNAP dari webcam.")
-    parser.add_argument("--sumber", help="pakai file video sebagai input, bukan webcam")
-    parser.add_argument("--snap", action="store_true", help="langsung buka mode SNAP")
+    parser = argparse.ArgumentParser(description="Retrolens: portal filters and the SNAP effect from the webcam.")
+    parser.add_argument("--sumber", help="use a video file instead of the webcam")
+    parser.add_argument("--snap", action="store_true", help="start in SNAP mode")
     return parser.parse_args()
 
 
@@ -942,7 +958,7 @@ def main() -> int:
     args = baca_argumen()
     salah = validasi_config(CONFIG)
     if salah:
-        print("CONFIG tidak valid:")
+        print("Invalid CONFIG:")
         for s in salah:
             print("  -", s)
         return 1
@@ -966,12 +982,12 @@ def main() -> int:
                 segmenter = PersonSegmenter(path_seg, CONFIG)
                 snap = ModeSnap(CONFIG, segmenter, profiler, hold_aktif, catatan_gestur)
             except Exception as e:
-                print("Segmenter tidak tersedia:", e)
+                print("Person segmenter not available, snap mode is off:", e)
 
         if args.sumber:
             cap = cv2.VideoCapture(args.sumber)
             if not cap.isOpened():
-                print("File video tidak bisa dibuka: %s" % args.sumber)
+                print("Cannot open the video file: %s" % args.sumber)
                 return 1
             fps_file = cap.get(cv2.CAP_PROP_FPS)
             jeda_frame = 1.0 / fps_file if fps_file > 0 else 0.0
@@ -979,10 +995,10 @@ def main() -> int:
         else:
             cap, indeks = buka_kamera(CONFIG)
             if cap is None:
-                print("Tidak ada kamera yang bisa dibuka. Di macOS, izinkan aplikasi terminal di "
+                print("No camera could be opened. On macOS, allow your terminal app in "
                       "System Settings > Privacy & Security > Camera.")
                 return 1
-            print("Kamera indeks %d, resolusi %dx%d." % (
+            print("Camera %d, %dx%d." % (
                 indeks, cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             jeda_frame = 0.0
             cermin = True
@@ -1016,9 +1032,8 @@ def main() -> int:
         now = time.monotonic()
         jadwal = now
         tampil = None
-        print("%s Tekan tombol 'q' di keyboard untuk keluar." % (
-            "Memutar video..." if args.sumber else "Membuka Kamera..."))
-        print("Mode %s. Tombol: %s" % (mode, BANTUAN_SNAP if mode == "SNAP" else BANTUAN_RETROLENS))
+        print("%s Press q in the window to quit." % ("Playing the video..." if args.sumber else "Opening the camera..."))
+        print("Mode %s. Keys: %s" % (mode, BANTUAN_SNAP if mode == "SNAP" else BANTUAN_RETROLENS))
 
         while True:
             with profiler.stage("capture"):
@@ -1027,12 +1042,12 @@ def main() -> int:
                     img = cv2.flip(img, 1)
             if not success:
                 if args.sumber:
-                    print("Video selesai.")
+                    print("The video has ended.")
                     break
                 gagal_baca += 1
                 if gagal_baca >= CONFIG["kamera_gagal_maks"]:
-                    print("Kamera gagal memberi gambar %d kali berturut-turut. Di macOS, cek izin kamera "
-                          "untuk aplikasi terminal." % gagal_baca)
+                    print("The camera gave no picture %d times in a row. On macOS, check the camera permission "
+                          "for your terminal app." % gagal_baca)
                     return 1
                 cv2.waitKey(30)
                 continue
@@ -1120,6 +1135,7 @@ def main() -> int:
             # Stop inference before the models it uses are closed below.
             pekerja.tutup()
         perekam.berhenti()
+        perekam.selesai()
         perekam_png.berhenti()
         if snap is not None:
             snap.tutup()

@@ -401,6 +401,7 @@ class TestRecorders(unittest.TestCase):
         for i, f in enumerate(self.frames):
             rec.tulis(f, i / 30.0)
         rec.berhenti()
+        rec.selesai()
         self.assertGreater(os.path.getsize(rec.path), 0)
 
 
