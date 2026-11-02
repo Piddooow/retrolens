@@ -951,6 +951,7 @@ def baca_argumen():
     parser = argparse.ArgumentParser(description="Retrolens: portal filters and the SNAP effect from the webcam.")
     parser.add_argument("--sumber", help="use a video file instead of the webcam")
     parser.add_argument("--snap", action="store_true", help="start in SNAP mode")
+    parser.add_argument("--logs", action="store_true", help="show the MediaPipe start up logs (for debugging)")
     return parser.parse_args()
 
 
@@ -1032,6 +1033,7 @@ def main() -> int:
         now = time.monotonic()
         jadwal = now
         tampil = None
+        jendela_ada = False
         print("%s Press q in the window to quit." % ("Playing the video..." if args.sumber else "Opening the camera..."))
         print("Mode %s. Keys: %s" % (mode, BANTUAN_SNAP if mode == "SNAP" else BANTUAN_RETROLENS))
 
@@ -1090,6 +1092,7 @@ def main() -> int:
                         portal.gambar(layar, now, pengukur.fps, filters[retrolens.current_filter], rekam)
                 with profiler.stage("display"):
                     cv2.imshow(JENDELA, layar)
+                jendela_ada = True
             elif jadi is not None:
                 # Inferred for the other mode just before a mode switch; the next frame fits again.
                 terakhir = jadi[0]
@@ -1101,7 +1104,8 @@ def main() -> int:
                     tunggu_ms = max(1, int(round((jadwal - time.monotonic()) * 1000)))
                 key = cv2.waitKey(tunggu_ms) & 0xFF
             profiler.end_frame()
-            if not jendela_terbuka():
+            # The first frame is shown one loop later (models run ahead), so the window only exists then.
+            if jendela_ada and not jendela_terbuka():
                 break
             if key == 255:
                 continue
@@ -1148,5 +1152,22 @@ def main() -> int:
             segmenter.close()
 
 
+def sembunyikan_log_model() -> None:
+    """Hide the MediaPipe and TensorFlow Lite start up chatter, which their C++ code writes to stderr.
+
+    Python's own warnings and errors still reach the terminal: sys.stderr keeps the original output.
+    """
+    try:
+        asli = os.dup(2)
+        sys.stderr = os.fdopen(asli, "w", buffering=1)
+        kosong = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(kosong, 2)
+        os.close(kosong)
+    except OSError as e:
+        print("Could not hide the model logs: %s" % e)
+
+
 if __name__ == "__main__":
+    if "--logs" not in sys.argv[1:]:
+        sembunyikan_log_model()
     sys.exit(main())

@@ -4,6 +4,23 @@ Aplikasi filter kamera interaktif menggunakan gesture tangan (hand tracking) den
 
 There is also a **SNAP mode**: snap your fingers and you turn into dust and vanish, with the room behind you showing through. Snap again to come back. See [SNAP mode](#snap-mode).
 
+## Quick start (macOS)
+
+1. Open the **Terminal** app.
+2. Go to the project folder. Type `cd `, drag the `python-handtrack` folder into the Terminal window, and press Enter.
+3. Start the app:
+   ```bash
+   ./run.sh
+   ```
+   The first time it sets everything up by itself (a few minutes). After that it starts right away.
+4. If macOS asks for camera access, click **Allow**. If the camera window stays black, open System Settings, Privacy & Security, Camera, turn on your Terminal app, quit Terminal, and run `./run.sh` again.
+5. **Let it learn the room:** step out of the camera view until the top left says **Ready** in green.
+6. **Vanish:** sit in front of the camera and snap your fingers (thumb and middle finger). Pressing **S** works too.
+7. **Come back:** snap again, or show your open palm for 1 second.
+8. **Quit:** press **Q** in the camera window.
+
+Press **H** in the app for all gestures and keys. The full guide is in [SNAP mode](#snap-mode).
+
 ## Persyaratan Sistem
 - Python 3.9 atau lebih baru
 - Webcam
@@ -90,6 +107,8 @@ python main.py --snap
 Snap your fingers and you turn into dust and vanish. The room behind you shows through as if you were never there. Snap again or show your open palm to come back.
 
 ### One time setup
+
+The easy way is `./run.sh` (see [Quick start](#quick-start-macos)): it does all the steps below by itself. To do them by hand:
 
 1. Open Terminal in the project folder and activate the environment: `source venv/bin/activate`
 2. Install packages: `pip install -r requirements.txt`
