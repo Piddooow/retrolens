@@ -20,6 +20,9 @@ class PersonSegmenter:
         )
         self.cfg = cfg
         self.mask = None  # type: Optional[np.ndarray]
+        # Set by reset (main thread), applied by perbarui (the inference thread), so only one thread
+        # ever touches the smoothed mask.
+        self._reset = False
         self._seg = vision.ImageSegmenter.create_from_options(opsi)
 
     def confidence(self, rgb: np.ndarray, ts_ms: int) -> np.ndarray:
@@ -32,6 +35,9 @@ class PersonSegmenter:
     def perbarui(self, bgr: np.ndarray, ts_ms: int) -> np.ndarray:
         """Mask yang dihaluskan antar frame untuk frame BGR resolusi proses."""
         baru = self.confidence(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), ts_ms)
+        if self._reset:
+            self._reset = False
+            self.mask = None
         if self.mask is None or self.mask.shape != baru.shape:
             self.mask = baru
         else:
@@ -40,7 +46,8 @@ class PersonSegmenter:
         return self.mask
 
     def reset(self) -> None:
-        self.mask = None
+        """Start the time smoothing over with the next frame."""
+        self._reset = True
 
     @staticmethod
     def mask_snap(mask: np.ndarray, cfg: Dict[str, Any]) -> Tuple[np.ndarray, float]:

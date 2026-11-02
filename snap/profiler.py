@@ -24,6 +24,10 @@ class Profiler:
         finally:
             self._frame[name] = self._frame.get(name, 0.0) + (time.perf_counter() - start) * 1000.0
 
+    def add(self, name: str, ms: float) -> None:
+        """Record a stage measured elsewhere, for example on the inference thread."""
+        self._frame[name] = self._frame.get(name, 0.0) + ms
+
     def end_frame(self) -> None:
         # A stage that did not run this frame counts as 0 ms, so averages show the real per frame cost.
         for name in set(self._history) | set(self._frame):

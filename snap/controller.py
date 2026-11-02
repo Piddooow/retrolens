@@ -20,6 +20,7 @@ from snap.config import STYLES
 from snap.dissolve import DissolveRenderer, smoothstep
 from snap.flash import FlashOverlay
 from snap.matte import MatteEngine
+from snap.quality import QualityLadder
 from snap.segmenter import PersonSegmenter
 
 MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds, then snap again"
@@ -54,6 +55,7 @@ class SnapController:
         self.abu = AshAmbient(cfg)
         self.jam = EffectClock(cfg)
         self.ukuran_butir = cfg["particle_cell_px"]
+        self.tangga = QualityLadder(cfg)
         self.gaya = cfg["style_default"]
 
         self.t_ganti = self.flash.mulai_putih
@@ -238,6 +240,7 @@ class SnapController:
             return False
         self._kosongkan_snapshot()
         self._pudar = None
+        self._terapkan_kualitas()
         # Snapshot dibekukan di sini; dissolve memakai frame dan matte ini sampai selesai.
         self._beku_tampil = self._frame_tampil.copy()
         self._matte_beku = self.matte.matte.copy()
@@ -251,9 +254,18 @@ class SnapController:
         self.jam.start(now)
         return True
 
+    def _terapkan_kualitas(self) -> None:
+        """Use the quality ladder's level; called only when an effect starts, never in the middle of one."""
+        atur = self.tangga.settings()
+        self.matte.scale = atur["matte_scale"]
+        self.matte.bayangan = atur["shadow"]
+        self.debu.blur = atur["dust_blur"]
+        self.ukuran_butir = atur["cell"]
+
     def _mulai_reappear(self, now: float) -> None:
         """Take the live frame and its matte as the body the dust assembles into."""
         cfg = self.cfg
+        self._terapkan_kualitas()
         frame = self._frame_tampil
         if frame is None or self.matte.matte is None:
             # Nothing seen yet to assemble; simply come back.

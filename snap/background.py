@@ -291,11 +291,19 @@ class BackgroundEngine:
         if area is None:
             area = self.known() & self.safe
         grid = tuple(cfg["bg_gain_grid"])
-        weight = area.astype(np.float32)
-        weight3 = cv2.merge([weight, weight, weight])
-        live = cv2.resize(cv2.multiply(frame, weight3, dtype=cv2.CV_32F), grid, interpolation=cv2.INTER_AREA)
-        plate = cv2.resize(cv2.multiply(self.plate, weight3, dtype=cv2.CV_32F), grid,
-                           interpolation=cv2.INTER_AREA)
+        w, h = self.size
+        half = ((w + 1) // 2, (h + 1) // 2)
+        mask = area.astype(np.uint8) * np.uint8(255)
+
+        def cell_mean(img: np.ndarray) -> np.ndarray:
+            # Halving the masked 8 bit image first gives the same cell means up to rounding, and is
+            # much cheaper than float math at display size.
+            small = cv2.resize(cv2.bitwise_and(img, img, mask=mask), half, interpolation=cv2.INTER_AREA)
+            return cv2.resize(small.astype(np.float32), grid, interpolation=cv2.INTER_AREA)
+
+        live = cell_mean(frame)
+        plate = cell_mean(self.plate)
+        weight = cv2.resize(mask, half, interpolation=cv2.INTER_AREA).astype(np.float32) * np.float32(1.0 / 255.0)
         coverage = cv2.GaussianBlur(cv2.resize(weight, grid, interpolation=cv2.INTER_AREA), (0, 0),
                                     cfg["bg_gain_sigma"])
         num = cv2.GaussianBlur(live, (0, 0), cfg["bg_gain_sigma"])
@@ -309,7 +317,7 @@ class BackgroundEngine:
         gain = np.clip(gain, cfg["bg_gain_min"], cfg["bg_gain_max"]).astype(np.float32)
         self.gain_small = gain
         full = cv2.resize(gain, self.size, interpolation=cv2.INTER_LINEAR)
-        return cv2.convertScaleAbs(cv2.multiply(self.plate, full, dtype=cv2.CV_32F))
+        return cv2.multiply(self.plate, full, dtype=cv2.CV_8U)
 
     def _update_noise(self, now: float, sub: np.ndarray) -> None:
         """Re-estimate the sensor noise sigma per channel from two consecutive frames.

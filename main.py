@@ -13,6 +13,7 @@ import numpy as np
 from snap import hud
 from snap.gestures import HoldGestureDetector
 from snap.profiler import Profiler
+from snap.worker import InferenceWorker
 from snap_effect import (CONFIG, MODE_TRIGGER, STYLE_NAMES, AudioSnapDetector, PemicuGabungan, PersonSegmenter,
                          SnapController, SnapGestureDetector, smoothstep, validasi_config)
 
@@ -460,7 +461,6 @@ class ModeSnap:
         self.debug = 0
         self.state_lalu = SnapController.LIVE
         self.prof = profiler
-        self.t_fps_rendah = None  # type: Optional[float]
         self.hold_aktif = hold_aktif
         self.catatan_gestur = catatan_gestur
         self.tahan = HoldGestureDetector(cfg)
@@ -583,14 +583,22 @@ class ModeSnap:
         self._cincin = self.tahan.progress()
         self.ctrl.atur_waktu("Closed_Fist" in self.tahan.held, "Pointing_Up" in self.tahan.held)
 
-    def proses(self, now: float, frame, hasil_tangan, ts: int):
-        """Frame akhir tanpa HUD. hasil_tangan None jika landmarker tidak dijalankan."""
+    def proses(self, now: float, frame, hasil_tangan, ts: int,
+               model: Optional[Tuple[np.ndarray, np.ndarray]] = None):
+        """Frame akhir tanpa HUD. hasil_tangan None jika landmarker tidak dijalankan.
+
+        model = (process size frame, person mask) already computed for this frame on the inference
+        thread; None runs the segmenter here.
+        """
         h, w = frame.shape[:2]
-        # Runs in every state: during the effect the live person is hidden too.
-        with self.prof.stage("segmenter"):
-            kecil = cv2.resize(frame, (self.cfg["proses_lebar"], self.cfg["proses_tinggi"]),
-                               interpolation=cv2.INTER_AREA)
-            mask = self.seg.perbarui(kecil, ts)
+        if model is not None:
+            kecil, mask = model
+        else:
+            # Runs in every state: during the effect the live person is hidden too.
+            with self.prof.stage("segmenter"):
+                kecil = cv2.resize(frame, (self.cfg["proses_lebar"], self.cfg["proses_tinggi"]),
+                                   interpolation=cv2.INTER_AREA)
+                mask = self.seg.perbarui(kecil, ts)
         # Times its own matte and background stages.
         self.ctrl.amati(now, frame, kecil, mask)
 
@@ -664,17 +672,13 @@ class ModeSnap:
             self._mulai_ulang_input()
 
     def periksa_fps(self, now: float, pengukur: PengukurFPS) -> None:
-        """Butir debu membesar jika FPS rendah terus-menerus; berlaku mulai snap berikutnya."""
-        turun = self.cfg["debu_ukuran_butir_turun"]
-        if not pengukur.penuh or self.ctrl.ukuran_butir == turun or pengukur.fps >= self.cfg["fps_batas_turun"]:
-            self.t_fps_rendah = None
+        """Feed the measured frame rate to the quality ladder; its level is used from the next effect on."""
+        if not pengukur.penuh:
             return
-        if self.t_fps_rendah is None:
-            self.t_fps_rendah = now
-        elif now - self.t_fps_rendah >= self.cfg["fps_turun_detik"]:
-            self.ctrl.ukuran_butir = turun
-            print("FPS %.1f di bawah %d selama %.0f detik: ukuran butir debu naik ke %d piksel." % (
-                pengukur.fps, self.cfg["fps_batas_turun"], self.cfg["fps_turun_detik"], turun))
+        lama = self.ctrl.tangga.level
+        self.ctrl.tangga.perbarui(now, pengukur.fps)
+        if self.ctrl.tangga.level != lama:
+            print("Quality level %d (fps %.1f); used from the next effect on." % (self.ctrl.tangga.level, pengukur.fps))
 
     def gambar_debug(self, img, now: float) -> None:
         h, w = img.shape[:2]
@@ -710,9 +714,9 @@ class ModeSnap:
             self.prof.window, "  ".join(self.prof.summary()), self.prof.total())
         tulis(img, tahap, (10, y + 10), skala_muat(tahap, w - 20, 0.5))
         if self.ctrl.state not in (SnapController.LIVE, SnapController.PLATE_CAPTURE):
-            tulis(img, "t efek = %.2f s  rate %.2f  butir %d  ukuran %d px  style %s" % (
+            tulis(img, "t efek = %.2f s  rate %.2f  butir %d  ukuran %d px  style %s  quality %d" % (
                 self.ctrl.waktu_efek(now), self.ctrl.jam.rate, self.ctrl.butir_tampil, self.ctrl.ukuran_butir,
-                self.ctrl.gaya), (10, y + 40), 0.5)
+                self.ctrl.gaya, self.ctrl.tangga.level), (10, y + 40), 0.5)
 
     def gambar_peta(self, img, view: str) -> None:
         """Semi transparent map of one engine stage over the frame."""
@@ -860,6 +864,50 @@ def buka_model_tangan(cfg) -> Tuple[Any, Any, bool, str]:
     return model, model.detect_for_video, False, MSG_GESTURE_MISSING
 
 
+class TugasModel:
+    """One captured frame for the inference thread, with what to compute for it."""
+
+    def __init__(self, frame, now: float, ts: int, mode: str, tangan: bool, seg: Optional[str]):
+        self.frame, self.now, self.ts, self.mode, self.tangan, self.seg = frame, now, ts, mode, tangan, seg
+
+
+class HasilModel:
+    """Model results for exactly one TugasModel frame, plus how long each model took (ms)."""
+
+    def __init__(self):
+        self.tangan = None  # type: Any
+        self.model = None  # type: Optional[Tuple[np.ndarray, np.ndarray]]
+        self.mask_portal = None  # type: Optional[np.ndarray]
+        self.ms = {}  # type: Dict[str, float]
+
+
+def jalankan_model(tugas: TugasModel, deteksi_tangan, segmenter, cfg) -> HasilModel:
+    """Run the hand model and the segmenter for one frame (on the inference thread)."""
+    hasil = HasilModel()
+    frame = tugas.frame
+    rgb = None
+    if tugas.tangan:
+        mulai = time.perf_counter()
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        hasil.tangan = deteksi_tangan(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), tugas.ts)
+        hasil.ms["hand"] = (time.perf_counter() - mulai) * 1000.0
+    if tugas.seg is not None:
+        mulai = time.perf_counter()
+        if tugas.seg == "snap":
+            kecil = cv2.resize(frame, (cfg["proses_lebar"], cfg["proses_tinggi"]), interpolation=cv2.INTER_AREA)
+            hasil.model = (kecil, segmenter.perbarui(kecil, tugas.ts))
+        else:
+            if rgb is None:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mask = segmenter.confidence(rgb, tugas.ts)
+            h, w = frame.shape[:2]
+            if mask.shape != (h, w):
+                mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
+            hasil.mask_portal = mask
+        hasil.ms["segmenter"] = (time.perf_counter() - mulai) * 1000.0
+    return hasil
+
+
 def buka_kamera(cfg) -> Tuple[Optional[cv2.VideoCapture], int]:
     kandidat = [cfg["kamera_indeks"]]
     if cfg["kamera_indeks"] != 1:
@@ -905,6 +953,7 @@ def main() -> int:
     snap = None  # type: Optional[ModeSnap]
     perekam = PerekamVideo()
     perekam_png = PerekamPNG()
+    pekerja = None  # type: Optional[InferenceWorker]
     profiler = Profiler(CONFIG["profiler_window"])
     try:
         landmarker, deteksi_tangan, hold_aktif, catatan_gestur = buka_model_tangan(CONFIG)
@@ -962,12 +1011,16 @@ def main() -> int:
                 portal.set_pesan(teks, now)
 
         gagal_baca = 0
+        pekerja = InferenceWorker(lambda tugas: jalankan_model(tugas, deteksi_tangan, segmenter, CONFIG))
+        terakhir = 0
+        now = time.monotonic()
+        jadwal = now
+        tampil = None
         print("%s Tekan tombol 'q' di keyboard untuk keluar." % (
             "Memutar video..." if args.sumber else "Membuka Kamera..."))
         print("Mode %s. Tombol: %s" % (mode, BANTUAN_SNAP if mode == "SNAP" else BANTUAN_RETROLENS))
 
         while True:
-            mulai = time.monotonic()
             with profiler.stage("capture"):
                 success, img = cap.read()
                 if success and cermin:
@@ -984,49 +1037,53 @@ def main() -> int:
                 cv2.waitKey(30)
                 continue
             gagal_baca = 0
-            h, w = img.shape[:2]
-            now = time.monotonic()
-            pengukur.tik(now)
-
             ts = timestamp.berikut()
-            results = None
-            img_rgb = None
-            if mode == "RETROLENS" or snap.butuh_tangan():
-                with profiler.stage("hand"):
-                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-                    results = deteksi_tangan(mp_image, ts)
-
-            if mode == "RETROLENS":
-                mask_person = None
-                if retrolens.butuh_mask() and segmenter is not None:
-                    with profiler.stage("segmenter"):
-                        mask_person = segmenter.confidence(img_rgb, ts)
-                        if mask_person.shape != (h, w):
-                            mask_person = cv2.resize(mask_person, (w, h), interpolation=cv2.INTER_LINEAR)
-                with profiler.stage("render"):
-                    retrolens.proses(img, results, mask_person)
-                tampil = img
+            if mode == "SNAP":
+                seg_mode = "snap"
+            elif retrolens.butuh_mask() and segmenter is not None:
+                seg_mode = "portal"
             else:
-                tampil = snap.proses(now, img, results, ts)
-                snap.periksa_fps(now, pengukur)
-
-            # Rekaman diambil sebelum HUD supaya file bersih dari teks.
-            perekam.tulis(tampil, now)
-            perekam_png.tulis(tampil)
-            with profiler.stage("hud"):
-                layar = tampil.copy()
-                rekam = (perekam.aktif, perekam_png.ditulis if perekam_png.aktif else -1)
-                if mode == "SNAP":
-                    snap.gambar_hud(layar, now, pengukur.fps, rekam)
+                seg_mode = None
+            perlu_tangan = mode == "RETROLENS" or snap.butuh_tangan()
+            pekerja.kirim(TugasModel(img, time.monotonic(), ts, mode, perlu_tangan, seg_mode))
+            # The newest finished frame, together with the results computed from that very frame.
+            jadi = pekerja.ambil(terakhir, 1.0)
+            key = 255
+            if jadi is not None and jadi[1].mode == mode:
+                terakhir, tugas, hasil = jadi
+                for nama, ms in hasil.ms.items():
+                    profiler.add(nama, ms)
+                img, now = tugas.frame, tugas.now
+                pengukur.tik(now)
+                if mode == "RETROLENS":
+                    with profiler.stage("render"):
+                        retrolens.proses(img, hasil.tangan, hasil.mask_portal)
+                    tampil = img
                 else:
-                    portal.gambar(layar, now, pengukur.fps, filters[retrolens.current_filter], rekam)
+                    tampil = snap.proses(now, img, hasil.tangan, tugas.ts, hasil.model)
+                    snap.periksa_fps(now, pengukur)
 
+                # Rekaman diambil sebelum HUD supaya file bersih dari teks.
+                perekam.tulis(tampil, now)
+                perekam_png.tulis(tampil)
+                with profiler.stage("hud"):
+                    layar = tampil.copy()
+                    rekam = (perekam.aktif, perekam_png.ditulis if perekam_png.aktif else -1)
+                    if mode == "SNAP":
+                        snap.gambar_hud(layar, now, pengukur.fps, rekam)
+                    else:
+                        portal.gambar(layar, now, pengukur.fps, filters[retrolens.current_filter], rekam)
+                with profiler.stage("display"):
+                    cv2.imshow(JENDELA, layar)
+            elif jadi is not None:
+                # Inferred for the other mode just before a mode switch; the next frame fits again.
+                terakhir = jadi[0]
             with profiler.stage("display"):
-                cv2.imshow(JENDELA, layar)
                 tunggu_ms = 1
                 if jeda_frame > 0:
-                    tunggu_ms = max(1, int((jeda_frame - (time.monotonic() - mulai)) * 1000))
+                    # A video file plays on a fixed schedule, so waiting errors do not add up.
+                    jadwal = max(jadwal + jeda_frame, time.monotonic() - jeda_frame)
+                    tunggu_ms = max(1, int(round((jadwal - time.monotonic()) * 1000)))
                 key = cv2.waitKey(tunggu_ms) & 0xFF
             profiler.end_frame()
             if not jendela_terbuka():
@@ -1053,12 +1110,15 @@ def main() -> int:
             elif huruf == "v":
                 if perekam.aktif:
                     kabar(perekam.berhenti(), now)
-                else:
+                elif tampil is not None:
                     kabar(perekam.mulai(tampil, pengukur.fps or CONFIG["fps_target"], now), now)
             elif mode == "SNAP":
                 snap.tombol(huruf, now)
         return 0
     finally:
+        if pekerja is not None:
+            # Stop inference before the models it uses are closed below.
+            pekerja.tutup()
         perekam.berhenti()
         perekam_png.berhenti()
         if snap is not None:

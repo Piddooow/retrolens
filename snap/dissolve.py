@@ -62,6 +62,8 @@ class DissolveRenderer:
         self.visible = 0
         self.last_alpha = None  # type: Optional[np.ndarray]
         self._prev_xy = np.zeros((0, 2), dtype=np.float32)
+        # Splat blur sigma; the quality ladder sets 0 (off) when the frame rate stays low.
+        self.blur = cfg["dust_blur"]
 
     # Preparation (once, under the white flash)
 
@@ -184,7 +186,7 @@ class DissolveRenderer:
         down = 0.5 * self.drift * h * life * life
         sway = 2.0 * cfg["debu_goyang_px"]
         # Bilinear splat (3 px), Gaussian kernel (2 px per half resolution pixel) and upsampling (2 px).
-        pad = 3 + 2 * (int(math.ceil(4.0 * cfg["dust_blur"])) + 1) + 2
+        pad = 3 + 2 * (int(math.ceil(4.0 * self.blur)) + 1) + 2
         left, right = (0.0, tx) if cfg["debu_balik_horizontal"] else (tx, 0.0)
         x0 = int(math.floor(x - left - pad))
         x1 = int(math.ceil(x + bw + right + pad))
@@ -309,7 +311,9 @@ class DissolveRenderer:
         index = (pixel * 4)[..., None] + CHANNELS
         value = corner[..., None] * weights[:, None, :]
         buf = np.bincount(index.ravel(), value.ravel(), minlength=h2 * w2 * 4)
-        buf = cv2.GaussianBlur(buf.astype(np.float32).reshape(h2, w2, 4), (0, 0), cfg["dust_blur"])
+        buf = buf.astype(np.float32).reshape(h2, w2, 4)
+        if self.blur > 0.0:
+            buf = cv2.GaussianBlur(buf, (0, 0), self.blur)
         buf *= np.float32(cfg["dust_gain"])
         self.last_alpha = buf[..., 0]
 

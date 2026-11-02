@@ -218,9 +218,13 @@ CONFIG = {
 
     # performa
     "fps_target": 24,
-    "fps_batas_turun": 20,
     "fps_jendela_frame": 30,
-    "fps_turun_detik": 2.0,
+    # quality ladder: a step down after fps_bad_hold_s below fps_bad, a step up after fps_good_hold_s above fps_good
+    "fps_good": 28,
+    "fps_good_hold_s": 5.0,
+    "fps_bad": 24,
+    "fps_bad_hold_s": 2.0,
+    "ladder_matte_scale": 0.25,
     "profiler_window": 60,
 
     # lembar uji (--uji)
@@ -239,7 +243,7 @@ _KUNCI_INT = ("kamera_indeks", "kamera_lebar", "kamera_tinggi", "kamera_gagal_ma
               "proses_tinggi", "audio_blocksize", "audio_ring_blok", "audio_kalibrasi_jumlah",
               "plate_hitung_mundur", "plate_jumlah_frame", "mask_kernel",
               "particle_cell_px", "debu_ukuran_butir_turun", "debu_seed", "abu_jumlah",
-              "abu_ukuran_maks", "fps_target", "fps_batas_turun", "fps_jendela_frame", "uji_jumlah_frame",
+              "abu_ukuran_maks", "fps_target", "fps_good", "fps_bad", "fps_jendela_frame", "uji_jumlah_frame",
               "profiler_window", "bg_safe_margin_px", "bg_safe_frames", "bg_median_step",
               "bg_known_samples", "bg_auto_capture_frames", "bg_moved_confirm", "bg_noise_tiles",
               "bg_noise_tile_px", "zone_dilate_px", "inpaint_pad_px", "matte_radius", "shadow_ring_px",
@@ -252,7 +256,7 @@ _KUNCI_PECAHAN = ("bg_safe_conf", "bg_absent_frac", "bg_phase_min_response", "bg
                   "debu_bobot_vertikal", "debu_bobot_noise", "debu_amplitudo_oktaf", "abu_alpha",
                   "flash_ambang_putih", "tengah_turun_min", "tangan_cocok_maks", "fine_noise_weight",
                   "hold_min_score", "hold_agree_frac", "ring_alpha", "slow_rate", "ash_wind_scale", "ash_drift",
-                  "ember_glow_strength", "help_alpha")
+                  "ember_glow_strength", "help_alpha", "ladder_matte_scale")
 _KUNCI_WARNA = ("flash_warna_dekat", "flash_warna_jauh", "abu_warna", "ash_color", "ember_glow", "ember_particle")
 _KUNCI_TABEL = ("flash_naik_tabel", "flash_turun_tabel")
 _KUNCI_GRID = ("bg_moved_grid", "bg_gain_grid")
@@ -357,8 +361,10 @@ def validasi_config(cfg: Dict[str, Any]) -> List[str]:
         salah.append("bg_known_samples must be at most 255 and bg_safe_frames at most 254")
     if cfg["bg_median_step"] > 255:
         salah.append("bg_median_step must be at most 255")
-    if cfg["fps_batas_turun"] > cfg["fps_target"]:
-        salah.append("fps_batas_turun tidak boleh lebih besar dari fps_target")
+    if cfg["fps_bad"] >= cfg["fps_good"]:
+        salah.append("fps_bad must be lower than fps_good")
+    if cfg["ladder_matte_scale"] >= cfg["matte_scale"]:
+        salah.append("ladder_matte_scale must be smaller than matte_scale")
     for k in ("particle_cell_px", "debu_ukuran_butir_turun"):
         if not 2 <= cfg[k] <= 16:
             salah.append("%s must be from 2 to 16 display pixels" % k)

@@ -7,12 +7,28 @@ import cv2
 import numpy as np
 
 
+CHANNEL_SUM = np.ones((1, 3), dtype=np.float32)
+# The guided filter runs only where the coarse mask reaches this fraction of matte_floor.
+SIGNAL_FRACTION = 0.25
+# Box edges on multiples of this, so the filter's internal subsampling grid stays the same.
+GRID_ALIGN = 8
+
+
+def _chroma(img: np.ndarray) -> np.ndarray:
+    """Each channel divided by the channel sum (plus 1), so brightness drops out and color stays."""
+    total = cv2.transform(img, CHANNEL_SUM) + 1.0
+    return cv2.divide(img, cv2.merge([total, total, total]))
+
+
 class MatteEngine:
     def __init__(self, cfg: Dict[str, Any]):
         self.cfg = cfg
         self.matte = None  # type: Optional[np.ndarray]
         self.person = None  # type: Optional[np.ndarray]
         self._dist = None  # type: Optional[np.ndarray]
+        # Set by the quality ladder at the start of an effect.
+        self.scale = cfg["matte_scale"]
+        self.bayangan = cfg["shadow_on"]
 
     def reset(self) -> None:
         self.matte = None
@@ -24,16 +40,30 @@ class MatteEngine:
         cfg = self.cfg
         h, w = frame.shape[:2]
         coarse = cv2.resize(conf_lo, (w, h), interpolation=cv2.INTER_LINEAR)
-        guide = frame.astype(np.float32)
-        guide *= 1.0 / 255.0
-        matte = cv2.ximgproc.guidedFilter(guide, coarse, cfg["matte_radius"], cfg["matte_eps"],
-                                          dDepth=-1, scale=cfg["matte_scale"])
-        np.clip(matte, 0.0, 1.0, out=matte)
-        matte[matte < cfg["matte_floor"]] = 0.0
-        person = matte > cfg["matte_on"]
-        # Hysteresis: a pixel that was person stays person down to matte_keep.
-        if self.person is not None and self.person.shape == person.shape:
-            person |= (matte > cfg["matte_keep"]) & self.person
+        matte = np.zeros((h, w), dtype=np.float32)
+        person = np.zeros((h, w), dtype=bool)
+        # Only near a real coarse signal can the refined matte reach matte_floor. The box adds the guided
+        # filter's full reach and keeps its corner on the filter's subsampling grid, so inside it the
+        # values match a full frame run; outside it everything would be floored to 0 anyway.
+        x, y, bw, bh = cv2.boundingRect((coarse >= cfg["matte_floor"] * SIGNAL_FRACTION).view(np.uint8))
+        if bw > 0 and bh > 0:
+            pad = int(math.ceil(2.0 * cfg["matte_radius"] / self.scale)) + GRID_ALIGN
+            x0, y0 = max(0, x - pad) // GRID_ALIGN * GRID_ALIGN, max(0, y - pad) // GRID_ALIGN * GRID_ALIGN
+            x1 = min(w, -(-(x + bw + pad) // GRID_ALIGN) * GRID_ALIGN)
+            y1 = min(h, -(-(y + bh + pad) // GRID_ALIGN) * GRID_ALIGN)
+            box = (slice(y0, y1), slice(x0, x1))
+            guide = frame[box].astype(np.float32)
+            guide *= 1.0 / 255.0
+            part = cv2.ximgproc.guidedFilter(guide, np.ascontiguousarray(coarse[box]), cfg["matte_radius"],
+                                             cfg["matte_eps"], dDepth=-1, scale=self.scale)
+            np.clip(part, 0.0, 1.0, out=part)
+            part[part < cfg["matte_floor"]] = 0.0
+            on = part > cfg["matte_on"]
+            # Hysteresis: a pixel that was person stays person down to matte_keep.
+            if self.person is not None and self.person.shape == person.shape:
+                on |= (part > cfg["matte_keep"]) & self.person[box]
+            matte[box] = part
+            person[box] = on
         self.matte, self.person = matte, person
         self._dist = None
         return matte
@@ -83,7 +113,7 @@ class MatteEngine:
         if box is None:
             return zf, shadow
         core = dist <= cfg["zone_dilate_px"]
-        if cfg["shadow_on"]:
+        if self.bayangan:
             shadow[box] = self._shadow(frame[box], plate_adj[box], known[box], core, dist)
         hard = (core | shadow[box]).astype(np.float32)
         # Feather outward only, so every pixel inside the zone is fully replaced.
@@ -113,9 +143,8 @@ class MatteEngine:
         plate = cv2.resize(plate_adj, half, interpolation=cv2.INTER_AREA).astype(np.float32)
         luma_live = cv2.cvtColor(live, cv2.COLOR_BGR2GRAY)
         luma_plate = cv2.cvtColor(plate, cv2.COLOR_BGR2GRAY)
-        chroma_live = live / (live.sum(axis=2, keepdims=True) + 1.0)
-        chroma_plate = plate / (plate.sum(axis=2, keepdims=True) + 1.0)
-        same_color = np.abs(chroma_live - chroma_plate).max(axis=2) < cfg["shadow_chroma_max"]
+        b, g, r = cv2.split(cv2.absdiff(_chroma(live), _chroma(plate)))
+        same_color = cv2.max(cv2.max(b, g), r) < cfg["shadow_chroma_max"]
         darker = luma_live < cfg["shadow_ratio_max"] * luma_plate
         core_b = blocks(core) > 0
         candidate = ((blocks(ring) > 0) & (blocks(known) == 255) & darker & same_color).view(np.uint8)
