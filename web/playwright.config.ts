@@ -11,8 +11,11 @@ const realGpu = process.env.RETROLENS_REAL_GPU === "1"
 export default defineConfig({
   testDir: "e2e",
   timeout: 120_000,
-  use: { baseURL: "http://localhost:4173" },
-  webServer: { command: "npm run build && npx vite preview --port 4173 --strictPort", port: 4173, reuseExistingServer: true },
+  // RETROLENS_URL tests a deployed site instead of a local build.
+  use: { baseURL: process.env.RETROLENS_URL ?? "http://localhost:4173" },
+  webServer: process.env.RETROLENS_URL
+    ? undefined
+    : { command: "npm run build && npx vite preview --port 4173 --strictPort", port: 4173, reuseExistingServer: true },
   projects: [
     {
       name: "chromium-fake-camera",
