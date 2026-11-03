@@ -71,6 +71,15 @@ class TestAppLoop(unittest.TestCase):
         self.assertEqual(window.calls, 30)
         self.assertGreater(window.shown, 20)
 
+    def test_glitch_keys_and_snap_in_the_real_loop(self):
+        # 4 picks Glitch, E opens and closes the effects menu, S snaps (the room was never learned here,
+        # so the snap is refused with a message), then q quits.
+        keys = {5: ord("4"), 15: ord("e"), 25: ord("e"), 35: ord("s"), 70: ord("q")}
+        window = FakeWindow(keys=keys)
+        self.assertEqual(self.run_app(window), 0)
+        self.assertEqual(window.calls, 70)
+        self.assertGreater(window.shown, 60)
+
     def test_closing_the_window_quits(self):
         window = FakeWindow(close_after=10)
         self.assertEqual(self.run_app(window), 0)

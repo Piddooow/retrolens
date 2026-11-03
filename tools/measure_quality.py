@@ -8,6 +8,7 @@ N/A means the render does not contain the data the metric needs (for example no 
 """
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -63,6 +64,39 @@ def expected_boundaries(cfg: Dict) -> Dict[Tuple[str, str], float]:
         table[("REAPPEAR", "LIVE")] = (cfg["reappear_sweep_s"] + cfg["reappear_life_s"]
                                        + cfg["reappear_blend_s"])
     return table
+
+
+def add_stepping(report: "Report", frames: List[Dict], fps: float, hz: float) -> None:
+    """Glitch stepping: every step shows for the frames one tick covers (2 or 3 at 30 fps for 12 Hz), and no
+    step is skipped. A stretch of one state is judged on its own; its first and last steps are cut short by
+    the state change, so their lengths are not judged."""
+    allowed = {int(np.floor(fps / hz + 1e-6)), int(np.ceil(fps / hz - 1e-6))}
+    stretches = []  # type: List[List[int]]
+    current = []  # type: List[int]
+    last_state = None
+    for fr in frames:
+        step = fr.get("glitch_step")
+        if step is None or step < 0 or fr["state"] != last_state:
+            if current:
+                stretches.append(current)
+            current = []
+        if step is not None and step >= 0:
+            current.append(step)
+        last_state = fr["state"]
+    if current:
+        stretches.append(current)
+    lengths, skipped = [], 0
+    for stretch in stretches:
+        runs = [(step, len(list(group))) for step, group in itertools.groupby(stretch)]
+        skipped += sum(1 for (a, _), (b, _) in zip(runs, runs[1:]) if b != a + 1)
+        lengths += [n for _, n in runs[1:-1]]
+    if not lengths:
+        report.add("stepping", None, "no glitch steps")
+        return
+    report.add("stepping", set(lengths) <= allowed and skipped == 0,
+               "each step held %s frames (allowed %s at %.0f fps), %d steps skipped" % (
+                   "/".join(str(n) for n in sorted(set(lengths))), "/".join(str(n) for n in sorted(allowed)),
+                   fps, skipped))
 
 
 class Report:
@@ -151,15 +185,22 @@ def measure(folder: str) -> int:
         report.add("noise", None, "fewer than 2 consecutive INVISIBLE frames")
         report.add("flicker", None, "fewer than 2 consecutive INVISIBLE frames")
 
+    glitch = cfg.get("style_default") == "GLITCH"
+    if glitch:
+        add_stepping(report, frames, fps, float(cfg["glitch_step_hz"]))
     masses = [fr["mass"] for fr in frames if fr["state"] in EFFECT_STATES and fr["mass"] is not None]
-    if len(masses) > 1:
+    if glitch:
+        report.add("continuity", None, "Glitch changes in steps by design; see stepping")
+    elif len(masses) > 1:
         jump = float(np.max(np.abs(np.diff(masses))))
         report.add("continuity", jump <= LIMITS["continuity"],
                    "largest visible mass change %.2f%% per frame (limit 4%%)" % (100 * jump))
     else:
         report.add("continuity", None, "no mass data")
     steps = [fr["step_px"] for fr in frames if fr["step_px"] is not None]
-    if steps:
+    if glitch:
+        report.add("step", None, "Glitch has no particles; see stepping")
+    elif steps:
         report.add("step", max(steps) <= LIMITS["step"],
                    "largest particle move %.1f px per frame (limit 12)" % max(steps))
     else:

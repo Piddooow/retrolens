@@ -184,6 +184,8 @@ All settings live in `CONFIG` in `snap/config.py`, and the app checks them on st
 
 Measured on an Apple silicon MacBook at 1280x720, without drawing the window: 29 to 30 fps in every state, which is the camera's own rate, with the hand and person models running on a background thread. `python tools/benchmark.py CLIP` measures it again; the status pill shows the live value. If the frame rate stays below 24 fps for 2 seconds, the app steps down to cheaper settings one at a time (coarser matte, bigger dust, no dust blur, no shadow removal) and steps back up after 5 seconds above 28 fps. A change is used from the next vanish or reappear on, never in the middle of one.
 
+Glitch keeps the same rate: 29 fps in every state with the camera at 29 fps (live glitch about 13 ms of drawing per frame, 22 ms at the 95th percentile). Each glitch step is built once and then reused while it is held, so the drawing per frame stays small.
+
 ### For developers
 
 ```bash
@@ -202,7 +204,17 @@ python tools/benchmark.py uji_lokal/v2/sit_snap.mp4 --bg uji_lokal/v2/room_empty
 
 # Preview sheet of 9 effect frames from one photo (with an optional empty room photo from the same spot)
 python snap_effect.py --uji "path/photo.png" --bg "path/empty.png"
+
+# Glitch: the 94 steps next to the reference frames, from one photo (needs ../reference-effect-spider-verse-1.mp4)
+python tools/glitch_sheet.py uji_lokal/orang.png --out uji_lokal/render/glitch_sheet
+
+# Glitch: render, measure (adds the stepping check) and time it; --live-only never snaps
+python tools/render_offline.py uji_lokal/v2/sit_snap.mp4 --bg uji_lokal/v2/room_empty.mp4 --style GLITCH --snap-at 3 --snap-at 6 --out uji_lokal/render/glitch
+python tools/measure_quality.py uji_lokal/render/glitch
+python tools/benchmark.py uji_lokal/v2/sit_snap.mp4 --bg uji_lokal/v2/room_empty.mp4 --style GLITCH --live-only
 ```
+
+The Glitch timing and colors live in `snap/glitch_score.py`: the 94 step score transcribed frame by frame from `reference-effect-spider-verse-1.mp4`, the vanish and reappear scores from `reference-effect-spider-verse-2.mp4`, and the palette measured from both. `snap/glitch.py` draws a step; `glitch_step_hz` in `snap/config.py` sets how many steps a second play (12, "on twos" at 24 fps).
 
 Recording test clips: keep the camera in the same position for all clips, then run these one at a time:
 
@@ -219,7 +231,9 @@ Recording test clips: keep the camera in the same position for all clips, then r
 3. The room must be still where you stand. Moving things behind you (a TV, a curtain in the wind) can show as a frozen patch while you are invisible.
 4. Light changes during the effect are matched only from 0.7x to 1.4x brightness per color channel. Beyond that, the edge of the hidden area may become visible.
 5. To keep the frame rate up, the picture is shown one camera frame (about 33 ms) late.
-6. The quality measurements inside the hidden area have only been run on compressed test clips with a stand-in room. There the flicker check passes, right at its limit (the hidden area changes no more than the live camera itself), and the noise match does not pass yet. Both still need real `room_empty` and `sit_snap` recordings.
+6. Glitch follows the reference's techniques, colors and timing, but a camera picture of a real person is not a flat cartoon on white, so it never matches the reference pixel for pixel. On a frame with see-through copies your body turns the reference's yellow, so the overlaps get its orange, green and gray.
+7. Glitch steps change 12 times a second while the camera runs at about 30, so a step shows for 2 or 3 camera frames in turn. That uneven hold is how 12 steps fit into 30 frames; recordings show the same.
+8. The quality measurements inside the hidden area have only been run on compressed test clips with a stand-in room. There the flicker check passes, right at its limit (the hidden area changes no more than the live camera itself), and the noise match sits at its limit: 0.82 on one render and 0.88 on another, where 0.85 passes. Both still need real `room_empty` and `sit_snap` recordings.
 
 ---
 **Catatan:** Pastikan ruangan memiliki pencahayaan yang cukup agar deteksi tangan dari kamera dapat bekerja dengan optimal.

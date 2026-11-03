@@ -356,5 +356,21 @@ class EffectKeysCase(unittest.TestCase):
         self.assertFalse(snap.menu)
 
 
+class SteppingMetricCase(unittest.TestCase):
+    def check(self, steps, state="LIVE"):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import measure_quality
+        report = measure_quality.Report()
+        measure_quality.add_stepping(report, [{"state": state, "glitch_step": k} for k in steps], 30.0, 12.0)
+        return report.rows[0][1]
+
+    def test_two_or_three_frames_per_step_pass(self):
+        self.assertEqual(self.check([0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 4]), "PASS")
+
+    def test_a_skipped_or_long_step_fails(self):
+        self.assertEqual(self.check([0, 0, 0, 1, 1, 3, 3, 3, 4, 4]), "FAIL")
+        self.assertEqual(self.check([0, 0, 1, 1, 1, 1, 2, 2]), "FAIL")
+
+
 if __name__ == "__main__":
     unittest.main()
