@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from snap.config import hex_ke_bgr  # noqa: E402
-from snap.glitch import GlitchRenderer, Tempelan  # noqa: E402
+from snap.glitch import GlitchRenderer, nada, tempel  # noqa: E402
 from snap.glitch_score import GHOST_ALPHA, PALETTE, REAPPEAR_SCORE, SCORE, VANISH_SCORE, validate_score  # noqa: E402
 from test_background import H, W, room  # noqa: E402
 from test_controller_v2 import CFG as CTRL_CFG, FakeSegmenter, Rig  # noqa: E402
@@ -56,6 +56,11 @@ class ScoreCase(unittest.TestCase):
         self.assertEqual(keep_in, sorted(keep_in))
         self.assertEqual(keep_in[-1], 1.0)
 
+    def test_the_glitch_stays_on_the_person(self):
+        # No full frame color regions, halftone, shards, bursts or blobs: only operations on the body.
+        for step in SCORE + VANISH_SCORE + REAPPEAR_SCORE:
+            self.assertTrue(set(step) <= {"cut", "fill", "cover", "copies", "mirror", "keep"}, step)
+
     def test_validator_catches_mistakes(self):
         bad = [{"cut": 4}, {"fill": ("NOPE",), "cover": 0.5}, {"fill": ("RED",)}, {"bg": "SKY"}, {"zoom": 1},
                {"keep": 0.0}]
@@ -97,21 +102,69 @@ class RendererCase(unittest.TestCase):
         self.r.render(self.frame, self.alpha, self.scene, step, 8)
         self.assertIsNot(self.r._rencana, plan)
 
-    def test_nothing_changes_outside_the_effect_region(self):
+    def test_nothing_changes_outside_the_body_region(self):
         for i, step in enumerate(SCORE):
-            if not step or "bg" in step:
+            if not step:
                 continue
             out = self.r.render(self.frame, self.alpha, self.scene, step, i)
-            x0, y0, x1, y1 = self.r._rencana.e
+            x0, y0, x1, y1 = self.r._rencana.g
             outside = np.ones((H, W), dtype=bool)
             outside[y0:y1, x0:x1] = False
-            np.testing.assert_array_equal(out[outside], self.scene[outside], err_msg="step %d" % i)
+            np.testing.assert_array_equal(out[outside], self.frame[outside], err_msg="step %d" % i)
 
-    def test_full_frame_background_replaces_the_room(self):
-        out = self.r.render(self.frame, self.alpha, self.scene, {"bg": "REGIONS"}, 3)
-        layer = self.r.latar("REGIONS", 3, W, H)
-        far = cv2.dilate(self.body.view(np.uint8), np.ones((9, 9), np.uint8)) == 0
-        np.testing.assert_array_equal(out[far], layer[far])
+    def test_the_room_shows_only_in_gaps(self):
+        # A room of one color no glitch tone can make shows exactly where it is used.
+        other_room = np.zeros_like(self.scene)
+        other_room[:] = (3, 254, 7)
+        near_body = cv2.dilate(self.body.view(np.uint8), np.ones((31, 31), np.uint8)) > 0
+        for i, step in enumerate(SCORE):
+            if not step:
+                continue
+            out = self.r.render(self.frame, self.alpha, other_room, step, i)
+            room = (out == other_room).all(axis=2) & (other_room != self.frame).any(axis=2)
+            # Never around the body as a halo: only inside or right next to it, and only for steps that move it.
+            self.assertFalse((room & ~near_body).any(), "step %d" % i)
+            if "cut" not in step and not any(n == "BODY" and lv > 0 for n, lv in step.get("copies", ())):
+                self.assertFalse(room.any(), "step %d" % i)
+
+    def test_a_moved_body_leaves_no_person_behind(self):
+        # The body moves away while see-through copies stay where the person was: the room shows there, also
+        # under the overlap of two see-through copies (together over half opaque, yet they hide nothing).
+        # Rendered for two shades of the same person, any pixel that still shows the person differs. The matte
+        # is exact here: a blurred one reaches past the person into the room at concave corners, which would
+        # change the tones there for a reason that has nothing to do with gaps.
+        exact = self.body.astype(np.float32)
+        darker = self.frame.copy()
+        darker[self.body] = 60
+        inner = cv2.erode(self.body.view(np.uint8), np.ones((9, 9), np.uint8)) > 0
+        for i, step in ((44, SCORE[44]), (1000, {"copies": (("BODY", 3), ("MAGENTA", 0), ("CYAN", 0))})):
+            a = self.r.render(self.frame, exact, self.scene, step, i)
+            b = GlitchRenderer().render(darker, exact, self.scene, step, i)
+            leftover = (a != b).any(axis=2) & inner
+            self.assertEqual(int(leftover.sum()), 0, "step %d" % i)
+
+    def test_copy_edges_are_crisp(self):
+        # On a plain room every color change along a row is an edge of the body or of a copy.
+        plain = np.full_like(self.scene, 90)
+        frame = plain.copy()
+        frame[self.body] = BODY_GRAY
+        out = self.r.render(frame, self.alpha, plain, {"copies": (("MAGENTA", 2),)}, 5)
+        row = out[500].astype(np.int16)
+        # Along a row through the torso, at most 3 pixels per edge blend between two flat colors.
+        changes = np.abs(np.diff(row, axis=0)).max(axis=1)
+        steps = np.flatnonzero(changes > 3)
+        runs = np.split(steps, np.flatnonzero(np.diff(steps) > 1) + 1)
+        self.assertTrue(all(len(run) <= 3 for run in runs if len(run)), [len(r) for r in runs])
+
+    def test_tones_are_clean_shapes_without_specks(self):
+        # A noisy, textured person: the tone map must not break up into specks.
+        frame = self.frame.copy()
+        noisy = room(9)
+        frame[self.body] = noisy[self.body]
+        out = self.r.render(frame, self.alpha, self.scene, {"fill": ("RED",), "cover": 1.0}, 4)
+        shadow = (out == nada("RED")[0, 0]).all(axis=2) & self.body
+        n, _, stats, _ = cv2.connectedComponentsWithStats(shadow.view(np.uint8), connectivity=8)
+        self.assertEqual(int((stats[1:, cv2.CC_STAT_AREA] < 6).sum()), 0)
 
     def test_flat_fill_uses_the_exact_palette_color(self):
         out = self.r.render(self.frame, self.alpha, self.scene, {"fill": ("RED",), "cover": 1.0}, 4)
@@ -147,18 +200,16 @@ class RendererCase(unittest.TestCase):
             hidden = ~(np.abs(out.astype(np.int16) - BODY_GRAY) <= 2).all(axis=2) & inner
             np.testing.assert_array_equal(out[hidden], self.scene[hidden])
 
-    def test_tempelan_composites_like_over(self):
+    def test_tempel_composites_like_over(self):
         base = self.scene.copy()
         layer = np.zeros((H, W, 4), dtype=np.uint8)
         layer[100:200, 100:200] = (40, 80, 120, 255)
         layer[300:400, 300:400] = (20, 40, 60, 128)
-        from snap.glitch import tempel
-        tempel(base, (0, 0, W, H), Tempelan(layer))
+        tempel(base, (0, 0, W, H), layer)
         np.testing.assert_array_equal(base[150, 150], (40, 80, 120))
         half = self.scene[350, 350].astype(np.float32) * (127.0 / 255.0) + (20, 40, 60)
         self.assertLessEqual(float(np.abs(base[350, 350] - half).max()), 1.0)
         np.testing.assert_array_equal(base[600, 1000], self.scene[600, 1000])
-
 
 class LiveGlitchCase(unittest.TestCase):
     """The Glitch style while visible, through the real SnapController."""

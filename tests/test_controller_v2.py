@@ -13,7 +13,7 @@ import snap_effect as se  # noqa: E402
 from snap.clock import EffectClock  # noqa: E402
 from test_background import H, LH, LW, W, room  # noqa: E402
 from test_dissolve import scene_with_person, soft_person  # noqa: E402
-from test_gestures_v2 import FakeResult  # noqa: E402
+from test_gestures_v2 import FakeResult, pose_hand  # noqa: E402
 
 CFG = dict(se.CONFIG, bg_noise_on=False)
 DT = 1.0 / 30
@@ -332,10 +332,10 @@ class TestModeSnapV2(unittest.TestCase):
         self.t = 1.2
         self.feed("None", 0.2)
 
-    def feed(self, label, seconds):
+    def feed(self, label, seconds, lm=None):
         for _ in range(int(round(seconds / DT))):
             self.t += DT
-            self.snap.proses(self.t, self.frame, FakeResult(label), int(self.t * 1000))
+            self.snap.proses(self.t, self.frame, FakeResult(label, lm=lm), int(self.t * 1000))
 
     def test_open_palm_brings_you_back(self):
         self.snap.tombol("s", self.t)
@@ -345,12 +345,20 @@ class TestModeSnapV2(unittest.TestCase):
         self.feed("Open_Palm", CFG["hold_palm_s"] + 0.1)
         self.assertEqual(self.snap.ctrl.state, "REAPPEAR")
 
-    def test_peace_sign_changes_style_and_rock_sign_toggles_help(self):
+    def test_peace_sign_and_metal_hand_change_the_effect(self):
         self.feed("Victory", CFG["hold_victory_s"] + 0.1)
         self.assertEqual(self.snap.ctrl.gaya, "ASH")
         self.feed("None", 0.7)
-        self.feed("ILoveYou", CFG["hold_love_s"] + 0.1)
-        self.assertTrue(self.snap.bantuan)
+        # The recognizer has no metal category ("None" here); the landmarks make it the metal hand.
+        self.feed("None", CFG["hold_metal_s"] + 0.1, lm=pose_hand("metal"))
+        self.assertEqual(self.snap.ctrl.gaya, "EMBER")
+        # Held on, it changes the effect once; let go and show it again for the next one.
+        self.feed("None", 1.5, lm=pose_hand("metal"))
+        self.assertEqual(self.snap.ctrl.gaya, "EMBER")
+        self.feed("None", 0.7, lm=pose_hand("open"))
+        self.feed("ILoveYou", CFG["hold_metal_s"] + 0.1, lm=pose_hand("love"))
+        self.assertEqual(self.snap.ctrl.gaya, "GLITCH")
+        self.assertFalse(self.snap.bantuan)
 
     def test_fist_freezes_the_dissolve_after_the_flash_only(self):
         self.snap.tombol("s", self.t)

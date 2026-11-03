@@ -550,7 +550,6 @@ class SnapController:
     def _glitch_live(self, now: float, frame: np.ndarray) -> np.ndarray:
         """The reference score on the live person, one step per glitch tick; the camera picture stays live."""
         h, w = frame.shape[:2]
-        self.glitch.panaskan(w, h)
         if self._glitch_t0 is None:
             self._glitch_t0 = now
         n = max(0, int(math.floor((now - self._glitch_t0) * self.cfg["glitch_step_hz"] + 1e-6)))

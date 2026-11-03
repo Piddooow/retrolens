@@ -1,4 +1,4 @@
-"""Hand gestures: the snap (thumb and middle finger) and held MediaPipe GestureRecognizer labels."""
+"""Hand gestures: the snap (thumb and middle finger), the metal hand, and held GestureRecognizer labels."""
 
 import collections
 import math
@@ -9,6 +9,27 @@ import numpy as np
 # One hand for HoldGestureDetector.update: landmarks (21, 2) in pixels, top label, its score, and
 # whether the snap detector is in SIAP on this hand.
 Hand = Tuple[np.ndarray, str, float, bool]
+# Label the app gives the metal hand; the GestureRecognizer has no such category.
+METAL = "Metal"
+# A finger counts as stretched when its tip is this much farther from the wrist than its middle joint.
+METAL_STRETCH = 1.15
+
+
+def tangan_metal(lm: np.ndarray) -> bool:
+    """The metal hand: index and pinky stretched, middle and ring folded (with the thumb in, or out as in the
+    "I love you" sign). Distances from the wrist, so any rotation and distance from the camera works."""
+    pergelangan = lm[0]
+
+    def jarak(i: int) -> float:
+        return float(np.hypot(*(lm[i] - pergelangan)))
+
+    def lurus(ujung: int, sendi: int) -> bool:
+        return jarak(ujung) > METAL_STRETCH * jarak(sendi)
+
+    def tekuk(ujung: int, sendi: int) -> bool:
+        return jarak(ujung) < jarak(sendi)
+
+    return lurus(8, 6) and lurus(20, 18) and tekuk(12, 10) and tekuk(16, 14)
 
 
 def pasangkan(lama: List[np.ndarray], baru: List[np.ndarray], maks_px: float) -> Dict[int, int]:

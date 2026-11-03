@@ -14,7 +14,7 @@ import numpy as np
 from snap import hud
 from snap.config import STYLES
 from snap.glitch_score import SCORE
-from snap.gestures import HoldGestureDetector
+from snap.gestures import METAL, HoldGestureDetector, tangan_metal
 from snap.profiler import Profiler
 from snap.worker import InferenceWorker
 from snap_effect import (CONFIG, MODE_TRIGGER, STYLE_NAMES, AudioSnapDetector, PemicuGabungan, PersonSegmenter,
@@ -38,7 +38,7 @@ HOLD_GESTUR = {
     "Thumb_Down": ("hold_thumb_down_s", _SEMUA[1:]),
     "Open_Palm": ("hold_palm_s", (SnapController.INVISIBLE,)),
     "Victory": ("hold_victory_s", (SnapController.LIVE, SnapController.INVISIBLE)),
-    "ILoveYou": ("hold_love_s", _SEMUA),
+    METAL: ("hold_metal_s", (SnapController.LIVE, SnapController.INVISIBLE)),
 }
 # Gestures that act while held: label -> (CONFIG key of the minimum hold, or None for none, states).
 # The controller ignores them during the flash.
@@ -52,10 +52,10 @@ BANTUAN_KARTU = (
     "Snap: vanish, or come back when invisible",
     "Open palm, 1 s: come back",
     "Thumbs up, 1 s: learn the room again",
-    "Peace sign, 1 s: next effect (Dust, Ash, Ember, Glitch)",
+    "Metal hand (index and pinky up), 1 s: next effect",
+    "Peace sign, 1 s: next effect too (Dust, Ash, Ember, Glitch)",
     "Fist, hold: freeze time during the effect",
     "Pointing up, hold: slow motion during the effect",
-    "Rock sign, 1 s: show or hide this help",
     "Thumbs down, 1 s: cancel and go back to normal",
     "",
     "Keys: S snap, B learn room, 1-4 effect, X next effect, E effects menu",
@@ -592,10 +592,8 @@ class ModeSnap:
             self.ctrl.set_pesan("Cancelled", now)
         elif label == "Open_Palm":
             self._picu(now, None)
-        elif label == "Victory":
+        elif label in ("Victory", METAL):
             self.ctrl.ganti_gaya(now)
-        elif label == "ILoveYou":
-            self.ganti_bantuan(now)
 
     def ganti_bantuan(self, now: float) -> None:
         self.bantuan = not self.bantuan
@@ -621,6 +619,10 @@ class ModeSnap:
             label, skor = (kategori[0].category_name, float(kategori[0].score)) if kategori else ("None", 0.0)
             # Hold gestures are ignored on a hand that is about to snap.
             siap = any(j["lm"] is lm and j["state"] == SnapGestureDetector.SIAP for j in self.gestur.tangan)
+            if tangan_metal(lm):
+                # Read from the landmarks, as the recognizer has no metal category. Its thumb often rests on the
+                # middle finger like a snap about to happen, but with the pinky up it is not one.
+                label, skor, siap = METAL, 1.0, False
             tangan.append((lm, label, skor, siap))
         self._tangan = tangan
         for label, pusat in self.tahan.update(now, tangan, self._holds(), self._terus(), lebar):

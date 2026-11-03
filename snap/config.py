@@ -37,7 +37,8 @@ CONFIG = {
     "hold_thumb_down_s": 1.0,
     "hold_palm_s": 1.0,
     "hold_victory_s": 0.8,
-    "hold_love_s": 1.0,
+    # Metal hand (index and pinky up): next effect.
+    "hold_metal_s": 0.8,
     # The snap release looks like a fist for under 0.2 s, so a fist only counts after this long.
     "hold_fist_min_s": 0.25,
 

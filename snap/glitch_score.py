@@ -1,7 +1,9 @@
 """The Glitch style's palette and scores, transcribed frame by frame from the references.
 
 SCORE (while visible) comes from reference-effect-spider-verse-1.mp4: 94 frames at 13 fps, played in order,
-one step per glitch tick. VANISH_SCORE and REAPPEAR_SCORE come from the finished shots in
+one step per glitch tick. Only what happens to the figure is kept: the reference's full frame color regions,
+halftone, shards, star bursts and blobs (#12 to #15, #21 to #24, #65 to #70, #80 to #85) are left out, so the
+glitch stays on the person and the room stays the room. VANISH_SCORE and REAPPEAR_SCORE come from the finished shots in
 reference-effect-spider-verse-2.mp4: Rick glitching out (frames 296 to 342 at 60 fps) and Morty glitching
 in (frames 8 to 56), about 0.8 s each, so 10 steps at 12 Hz. Colors are k-means centers measured on the
 reference frames (RGB hex, converted to BGR where used).
@@ -14,9 +16,6 @@ A step is a dict of operations, all optional (an empty dict is a calm step, the 
             are see-through at GHOST_ALPHA and lie over the body, which then takes the reference's yellow;
             BODY is the body itself; other names are flat opaque copies behind the body.
     mirror: palette name of a mirrored copy.
-    burst:  MINT, PASTEL, RED or OUTLINE star burst behind the body (the outline is drawn over it).
-    blob:   palette names of large soft shapes behind the body.
-    bg:     REGIONS, SHARDS or HALFTONE, a full frame background for this step.
     keep:   share of the body still shown, 0..1; the rest shows the room (vanish and reappear only).
 """
 
@@ -43,29 +42,6 @@ PALETTE = {
     "PURPLE": "#5B509E",
     # Opaque light green copy behind the body (#10).
     "LIME": "#ADFD33",
-    # Full frame color regions (#13, #82).
-    "REG_CYAN": "#31FDF4",
-    "REG_BLUE": "#2D39FD",
-    "REG_GREEN": "#2FFD48",
-    "REG_RED": "#FB3346",
-    "REG_LIME": "#DDFC36",
-    # Background shards (#12, #80).
-    "SHARD_BLUE": "#2E3DFB",
-    "SHARD_CYAN": "#34F9F4",
-    "SHARD_GREEN": "#31FC4A",
-    # Halftone (#15, #65): dot ink on white, with blue shards.
-    "DOT": "#EF4C79",
-    "HALF_BLUE": "#4941E8",
-    # Star bursts (#21, #23, #65, #67).
-    "MINT": "#04FB9B",
-    "MINT_LINE": "#306E51",
-    "PASTEL_PINK": "#F98FA6",
-    "PASTEL_CYAN": "#9EECE6",
-    "RED_BURST": "#E35453",
-    "RED_LINE": "#7A2B30",
-    # Soft shapes behind the body (#68 to #70).
-    "BLOB_CYAN": "#03CAFB",
-    "BLOB_GREEN": "#02F379",
     # Reference 2 recolors: Rick glitching out (#296 to #330).
     "NAVY": "#03001C",
     "LIME_RICK": "#86D409",
@@ -89,9 +65,7 @@ PALETTE = {
 # CYAN over YELLOW gives #96D57D (reference #A6D66A) and GREEN_GHOST over YELLOW gives #8DE92A (reference #8EEA1E).
 GHOST_ALPHA = 0.5
 SEE_THROUGH = ("MAGENTA", "CYAN", "GREEN_GHOST")
-BURSTS = ("MINT", "PASTEL", "RED", "OUTLINE")
-BACKGROUNDS = ("REGIONS", "SHARDS", "HALFTONE")
-OPERATIONS = ("cut", "fill", "cover", "copies", "mirror", "burst", "blob", "bg", "keep")
+OPERATIONS = ("cut", "fill", "cover", "copies", "mirror", "keep")
 
 Step = Dict[str, Any]
 
@@ -112,19 +86,19 @@ SCORE = [
     {"cut": 3},                                                                     # 9
     {"cut": 1, "copies": (("LIME", 1),)},                                           # 10
     {"cut": 2, "copies": (("SOFT_RED", 3),)},                                       # 11
-    {"bg": "SHARDS", "cut": 2, "copies": (("BLUE", 1),)},                           # 12
-    {"bg": "REGIONS", "cut": 2, "fill": ("RED", "GREEN", "BLUE"), "cover": 0.25},   # 13
-    {"bg": "SHARDS", "cut": 3, "copies": _cmy(3) + ((M, 2), (C, 1))},               # 14
-    {"bg": "HALFTONE", "cut": 2, "copies": ((C, 1),), "fill": ("BLUE", "GREEN"), "cover": 0.1},  # 15
+    {"cut": 2, "copies": (("BLUE", 1),)},                           # 12
+    {"cut": 2, "fill": ("RED", "GREEN", "BLUE"), "cover": 0.25},   # 13
+    {"cut": 3, "copies": _cmy(3) + ((M, 2), (C, 1))},               # 14
+    {"cut": 2, "copies": ((C, 1),), "fill": ("BLUE", "GREEN"), "cover": 0.1},  # 15
     {"cut": 1, "fill": ("RED", "PURPLE", "ORANGE"), "cover": 0.8, "copies": ((M, 1),)},  # 16
     {"cut": 2, "fill": ("GREEN", "BLUE", "RED"), "cover": 0.5},                     # 17
     {"cut": 2, "fill": ("BLUE", "RED", "GREEN"), "cover": 0.85},                    # 18
     {"cut": 3, "fill": ("GREEN", "BLUE", "RED"), "cover": 0.4},                     # 19
     {"cut": 2, "fill": ("GREEN",), "cover": 0.7},                                   # 20
-    {"burst": "MINT", "cut": 2, "fill": ("RED", "BLUE"), "cover": 0.6},             # 21
-    {"burst": "MINT", "cut": 3, "fill": ("AQUA", "GREEN", "YELLOW"), "cover": 0.6},  # 22
-    {"burst": "PASTEL", "copies": _cmy(2)},                                         # 23
-    {"burst": "OUTLINE", "copies": _cmy(3)},                                        # 24
+    {"cut": 2, "fill": ("RED", "BLUE"), "cover": 0.6},             # 21
+    {"cut": 3, "fill": ("AQUA", "GREEN", "YELLOW"), "cover": 0.6},  # 22
+    {"copies": _cmy(2)},                                         # 23
+    {"copies": _cmy(3)},                                        # 24
     {"copies": _cmy(1)},                                                            # 25
     {"mirror": C},                                                                  # 26
     {"cut": 3},                                                                     # 27
@@ -164,12 +138,12 @@ SCORE = [
     {"cut": 2, "fill": ("BLACK", "AQUA", "GREEN"), "cover": 0.9},                   # 62
     {"cut": 1, "fill": ("AQUA",), "cover": 0.05},                                   # 63
     {"cut": 2, "copies": (("DEEP_TEAL", 2), ("DEEP_RED", 1), (M, 2), (C, 3))},      # 64
-    {"bg": "HALFTONE", "burst": "RED", "copies": ((C, 1), (M, 1))},                 # 65
-    {"bg": "HALFTONE", "burst": "RED", "copies": ((M, 1), (B, 1))},                 # 66
-    {"burst": "RED", "copies": _cmy(2)},                                            # 67
-    {"blob": ("BLOB_CYAN",), "burst": "OUTLINE", "copies": _cmy(2)},                # 68
-    {"blob": ("BLOB_GREEN", "BLOB_CYAN"), "copies": _cmy(3)},                       # 69
-    {"blob": ("BLOB_GREEN", "SOFT_RED"), "copies": _cmy(3)},                        # 70
+    {"copies": ((C, 1), (M, 1))},                 # 65
+    {"copies": ((M, 1), (B, 1))},                 # 66
+    {"copies": _cmy(2)},                                            # 67
+    {"copies": _cmy(2)},                # 68
+    {"copies": _cmy(3)},                       # 69
+    {"copies": _cmy(3)},                        # 70
     {"cut": 2, "copies": ((C, 3),), "fill": ("BLACK",), "cover": 0.05},             # 71
     {"cut": 3, "fill": ("BLACK",), "cover": 0.3},                                   # 72
     {"cut": 3, "fill": ("BLACK",), "cover": 0.4},                                   # 73
@@ -179,12 +153,12 @@ SCORE = [
     {"cut": 2, "fill": ("BLUE", "RED", "GREEN", "BLACK"), "cover": 0.7},            # 77
     {"cut": 2, "fill": ("BLUE", "GREEN"), "cover": 0.5},                            # 78
     {"cut": 2, "fill": ("GREEN", "RED"), "cover": 0.25},                            # 79
-    {"bg": "SHARDS", "cut": 3, "copies": (("BLUE", 2),)},                           # 80
-    {"bg": "SHARDS", "cut": 3, "copies": (("BLUE", 3),)},                           # 81
-    {"bg": "REGIONS", "cut": 2},                                                    # 82
-    {"bg": "SHARDS", "cut": 3, "copies": _cmy(2) + (("BLUE", 1),)},                 # 83
-    {"bg": "SHARDS", "cut": 3, "copies": _cmy(2) + (("BLUE", 2),)},                 # 84
-    {"bg": "SHARDS", "cut": 2, "copies": ((C, 2),)},                                # 85
+    {"cut": 3, "copies": (("BLUE", 2),)},                           # 80
+    {"cut": 3, "copies": (("BLUE", 3),)},                           # 81
+    {"cut": 2},                                                    # 82
+    {"cut": 3, "copies": _cmy(2) + (("BLUE", 1),)},                 # 83
+    {"cut": 3, "copies": _cmy(2) + (("BLUE", 2),)},                 # 84
+    {"cut": 2, "copies": ((C, 2),)},                                # 85
     {"cut": 2, "fill": ("GREEN", "SKY", "BLACK"), "cover": 0.6},                    # 86
     {"cut": 3, "fill": ("BLACK", "ORANGE", "RED"), "cover": 0.6},                   # 87
     {"cut": 2, "fill": ("ORANGE",), "cover": 0.6},                                  # 88
@@ -244,12 +218,6 @@ def validate_score(score: List[Step]) -> List[str]:
                 errors.append("step %d: bad copy" % i)
             elif key == "mirror" and value != "BODY" and value not in PALETTE:
                 errors.append("step %d: unknown mirror color" % i)
-            elif key == "burst" and value not in BURSTS:
-                errors.append("step %d: unknown burst" % i)
-            elif key == "blob" and not all(n in PALETTE for n in value):
-                errors.append("step %d: unknown blob color" % i)
-            elif key == "bg" and value not in BACKGROUNDS:
-                errors.append("step %d: unknown background" % i)
             elif key == "keep" and not 0.0 < value <= 1.0:
                 errors.append("step %d: keep must be in (0, 1]" % i)
         if ("fill" in step) != ("cover" in step):

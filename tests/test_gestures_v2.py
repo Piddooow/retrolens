@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import unittest
@@ -167,11 +168,39 @@ class FakeCategory:
         self.category_name, self.score = name, score
 
 
-class FakeResult:
-    """Shaped like a GestureRecognizerResult for one hand at the center of the frame."""
+# Hand poses as (x, y) landmark offsets from the wrist, fingers pointing up: thumb 1-4, index 5-8, middle
+# 9-12, ring 13-16, pinky 17-20. A stretched finger's tip is far past its middle joint, a folded one curls back.
+_THUMB_IN = [(-25, -20), (-35, -45), (-20, -62), (5, -70)]
+_THUMB_OUT = [(-25, -20), (-45, -40), (-60, -58), (-75, -72)]
+_INDEX = {"up": [(-20, -90), (-24, -130), (-26, -155), (-28, -180)],
+          "down": [(-20, -90), (-24, -125), (-24, -108), (-20, -95)]}
+_MIDDLE = {"up": [(0, -95), (0, -135), (2, -160), (3, -185)], "down": [(0, -95), (0, -135), (2, -115), (3, -100)]}
+_RING = {"up": [(18, -90), (20, -128), (21, -150), (22, -170)], "down": [(18, -90), (20, -125), (20, -105), (19, -92)]}
+_PINKY = {"up": [(33, -80), (38, -105), (41, -123), (44, -140)], "down": [(33, -80), (38, -102), (38, -90), (36, -80)]}
+POSES = {
+    "metal": (_THUMB_IN, "up", "down", "down", "up"),
+    "love": (_THUMB_OUT, "up", "down", "down", "up"),
+    "open": (_THUMB_OUT, "up", "up", "up", "up"),
+    "fist": (_THUMB_IN, "down", "down", "down", "down"),
+    "peace": (_THUMB_IN, "up", "up", "down", "down"),
+}
 
-    def __init__(self, label, score=0.9):
-        lm = hand_at(640.0, 400.0)
+
+def pose_hand(pose, cx=640.0, cy=500.0, angle=0.0, scale=1.0):
+    """21 landmarks in pixels for a named pose, rotated by angle (radians) and scaled around the wrist."""
+    thumb, index, middle, ring, pinky = POSES[pose]
+    pts = np.array([(0, 0)] + thumb + _INDEX[index] + _MIDDLE[middle] + _RING[ring] + _PINKY[pinky],
+                   dtype=np.float32) * scale
+    c, s = math.cos(angle), math.sin(angle)
+    rot = pts @ np.array([[c, s], [-s, c]], dtype=np.float32)
+    return rot + np.array([cx, cy], dtype=np.float32)
+
+
+class FakeResult:
+    """Shaped like a GestureRecognizerResult for one hand at the center of the frame (or the given landmarks)."""
+
+    def __init__(self, label, score=0.9, lm=None):
+        lm = hand_at(640.0, 400.0) if lm is None else lm
         self.hand_landmarks = [[FakePoint(x / 1280.0, y / 720.0) for x, y in lm]]
         self.gestures = [[FakeCategory(label, score)]]
 
@@ -267,3 +296,14 @@ class TestRecordedLandmarks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMetalHand(unittest.TestCase):
+    def test_metal_and_love_signs_count_others_do_not(self):
+        from snap.gestures import tangan_metal
+        for pose, expected in (("metal", True), ("love", True), ("open", False), ("fist", False),
+                               ("peace", False)):
+            for angle in (0.0, 1.5, 3.5, -0.6):
+                for scale in (0.5, 1.0, 2.0):
+                    self.assertEqual(tangan_metal(pose_hand(pose, angle=angle, scale=scale)), expected,
+                                     (pose, angle, scale))

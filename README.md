@@ -134,10 +134,10 @@ Gestures:
 * Snap: vanish, or come back when invisible
 * Open palm, 1 s: come back
 * Thumbs up, 1 s: learn the room again
-* Peace sign, 1 s: next effect (Dust, Ash, Ember, Glitch)
+* Peace sign, 1 s: next effect too (Dust, Ash, Ember, Glitch)
 * Fist, hold: freeze time during the effect
 * Pointing up, hold: slow motion during the effect
-* Rock sign (thumb, index, and pinky up), 1 s: show or hide help
+* Metal hand 🤘 (index and pinky up, middle and ring folded; the thumb may be in or out), 1 s: next effect. Hold it once per change: let go and show it again for the one after.
 * Thumbs down, 1 s: cancel and go back to normal
 
 A ring around your hand fills up while you hold a gesture. When it is full, the action happens. Freeze and slow motion work once the white flash has faded, and they ease in and out instead of stopping at once.
@@ -146,12 +146,12 @@ Keys: M mode, S or Space snap, B learn room, 1 to 4 pick an effect, X next effec
 
 ### Effects
 
-Pick an effect with the number keys, cycle with X or the peace sign, or press E for a small menu that shows which one is on. You can switch while you are visible or invisible; the status pill shows the current one.
+Pick an effect with the number keys, cycle with the metal hand 🤘 (no keyboard needed), the peace sign or X, or press E for a small menu that shows which one is on. You can switch while you are visible or invisible; the status pill shows the current one.
 
 1. **Dust:** you crumble into film-like dust.
 2. **Ash:** dark gray ash that falls slower and sinks.
 3. **Ember:** a warm glowing edge, embers fading out.
-4. **Glitch:** the Spider-Verse look. While you are visible, your body glitches in short bursts: it gets sliced and shifted, recolored in flat colors, doubled in see-through pink and cyan, and now and then the whole frame flashes color regions, halftone dots, or star bursts. The glitch changes 12 times a second ("on twos" at 24 fps), while the camera picture under it stays live. It follows the timing of the reference animation, starting with half a second of calm. Learn the room first (step out until it says Ready): until then the shifted pieces cover your body instead of showing the room behind you. Snapping with Glitch on glitches you out in under a second: your body breaks into recolored pieces, the lower part goes first, and a last strip across your eyes flickers before you are gone. Coming back plays it the other way, from a piece of your head to all of you, and ends on the plain camera picture. Fist and pointing up freeze and slow the glitch too.
+4. **Glitch:** the Spider-Verse look. While you are visible, your body glitches in short bursts: it gets sliced and shifted, recolored in flat colors, and doubled in see-through pink and cyan. The glitch stays on you: the room behind you is never painted over, it only shows through where a slice of you moved away. The glitch changes 12 times a second ("on twos" at 24 fps), while the camera picture under it stays live. It follows the timing of the reference animation, starting with half a second of calm. Learn the room first (step out until it says Ready): until then the shifted pieces cover your body instead of showing the room behind you. Snapping with Glitch on glitches you out in under a second: your body breaks into recolored pieces, the lower part goes first, and a last strip across your eyes flickers before you are gone. Coming back plays it the other way, from a piece of your head to all of you, and ends on the plain camera picture. Fist and pointing up freeze and slow the glitch too.
 
 ### Snap by sound
 
