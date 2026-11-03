@@ -196,6 +196,8 @@ CONFIG = {
     "ember_glow_px": 3,
     "ember_glow_strength": 0.6,
     "style_toast_s": 1.2,
+    # Glitch style: changes per second, "on twos" at 24 fps like the reference animation.
+    "glitch_step_hz": 12,
 
     # help card
     "help_alpha": 0.65,
@@ -233,7 +235,7 @@ CONFIG = {
 }
 
 MODE_TRIGGER = ("GESTUR", "SUARA", "ATAU", "DAN")
-STYLES = ("DUST", "ASH", "EMBER")
+STYLES = ("DUST", "ASH", "EMBER", "GLITCH")
 # Frame rate at which motion limits such as max_particle_step_px are defined.
 REFERENCE_FPS = 30
 

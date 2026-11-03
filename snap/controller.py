@@ -19,6 +19,8 @@ from snap.clock import EffectClock
 from snap.config import STYLES
 from snap.dissolve import DissolveRenderer, smoothstep
 from snap.flash import FlashOverlay
+from snap.glitch import GlitchRenderer, perlu_ruang
+from snap.glitch_score import SCORE
 from snap.matte import MatteEngine
 from snap.quality import QualityLadder
 from snap.segmenter import PersonSegmenter
@@ -27,7 +29,8 @@ MSG_NEED_ROOM = "I still need to see the room behind you. Step out for 2 seconds
 MSG_ESTIMATED = "Background estimated, result may not be perfect"
 MSG_CANT_SEE = "I can't see behind you there"
 MSG_NO_PERSON = "I can't see anyone. Step into the frame"
-STYLE_NAMES = {"DUST": "Dust", "ASH": "Ash", "EMBER": "Ember"}
+MSG_STYLE_LATER = "Pick an effect when this one has finished"
+STYLE_NAMES = {"DUST": "Dust", "ASH": "Ash", "EMBER": "Ember", "GLITCH": "Glitch"}
 
 
 class SnapController:
@@ -57,6 +60,10 @@ class SnapController:
         self.ukuran_butir = cfg["particle_cell_px"]
         self.tangga = QualityLadder(cfg)
         self.gaya = cfg["style_default"]
+        self.glitch = GlitchRenderer()
+        # Glitch style while visible: start time of the score and the step shown last (-1 = none).
+        self._glitch_t0 = None  # type: Optional[float]
+        self.glitch_langkah = -1
 
         self.t_ganti = self.flash.mulai_putih
         self.debu_akhir = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
@@ -207,13 +214,22 @@ class SnapController:
         self.t_rekam = now + self.cfg["plate_hitung_mundur"]
         self.bg.cancel_capture()
 
-    def ganti_gaya(self, now: float) -> bool:
-        """Next effect style (from LIVE or INVISIBLE); it applies from the next vanish or reappear."""
+    def pilih_gaya(self, gaya: str, now: float) -> bool:
+        """Effect style (from LIVE or INVISIBLE); it applies from the next vanish or reappear, and Glitch also
+        right away while visible."""
         if self.state not in (self.LIVE, self.INVISIBLE):
+            self.set_pesan(MSG_STYLE_LATER, now)
             return False
-        self.gaya = STYLES[(STYLES.index(self.gaya) + 1) % len(STYLES)]
+        if gaya != self.gaya:
+            self.gaya = gaya
+            # The glitch score starts over, from its calm opening.
+            self._glitch_t0 = None
         self.set_pesan(STYLE_NAMES[self.gaya], now, self.cfg["style_toast_s"])
         return True
+
+    def ganti_gaya(self, now: float) -> bool:
+        """The next effect style in STYLES order."""
+        return self.pilih_gaya(STYLES[(STYLES.index(self.gaya) + 1) % len(STYLES)], now)
 
     def picu(self, now: float, asal: Optional[Tuple[float, float]] = None) -> bool:
         """Snap: vanish from LIVE, reappear from INVISIBLE. asal = snap point 0..1 for the flash."""
@@ -295,6 +311,7 @@ class SnapController:
 
     def _masuk_live(self, now: float) -> None:
         self.state = self.LIVE
+        self._glitch_t0 = None
         self.cooldown_sampai = now + self.cfg["cooldown_detik"]
         self.butir_tampil = 0
         self._target_waktu = 1.0
@@ -469,6 +486,9 @@ class SnapController:
 
     def _render_live(self, now: float, frame_tampil: np.ndarray) -> np.ndarray:
         if self._pudar is None:
+            if self.state == self.LIVE and self.gaya == "GLITCH":
+                return self._glitch_live(now, frame_tampil)
+            self.glitch_langkah = -1
             return frame_tampil
         beku, mulai = self._pudar
         k = float(smoothstep((now - mulai) / self.cfg["cancel_fade_s"]))
@@ -476,3 +496,39 @@ class SnapController:
             self._pudar = None
             return frame_tampil
         return cv2.addWeighted(beku, 1.0 - k, frame_tampil, k, 0.0)
+
+    def _glitch_live(self, now: float, frame: np.ndarray) -> np.ndarray:
+        """The reference score on the live person, one step per glitch tick; the camera picture stays live."""
+        h, w = frame.shape[:2]
+        self.glitch.panaskan(w, h)
+        if self._glitch_t0 is None:
+            self._glitch_t0 = now
+        n = max(0, int(math.floor((now - self._glitch_t0) * self.cfg["glitch_step_hz"] + 1e-6)))
+        self.glitch_langkah = n
+        step = SCORE[n % len(SCORE)]
+        matte = self.matte.matte
+        if not step or matte is None or matte.shape != (h, w):
+            return frame
+        bersih = self._tanpa_orang(frame) if perlu_ruang(step) else None
+        # The step number is the seed: each pass through the score gets new shapes.
+        return self.glitch.render(frame, matte, bersih, step, n)
+
+    def _tanpa_orang(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        """The live frame with the person and their shadow replaced by the learned room; None while the room
+        behind them is not known well enough (the glitch then keeps the body under what moves)."""
+        if not self.bg_siap or self.matte.matte is None:
+            return None
+        # Runs inside the app's render stage, so it is not timed as a stage of its own.
+        known = self.bg.known()
+        adj = self.bg.plate_adj(frame, known & ~self.matte.core())
+        zf, _ = self.matte.zone(frame, adj, known)
+        # Room that was never seen keeps the live frame instead of a made up plate value.
+        zf = cv2.multiply(zf, known.astype(np.float32))
+        pv = self.bg.plate_view(adj, zf)
+        hasil = frame.copy()
+        x, y, bw, bh = cv2.boundingRect((zf > 0.0).view(np.uint8))
+        if bw > 0 and bh > 0:
+            kotak = (slice(y, y + bh), slice(x, x + bw))
+            bobot = np.ascontiguousarray(zf[kotak])
+            hasil[kotak] = cv2.blendLinear(frame[kotak], pv[kotak], 1.0 - bobot, bobot)
+        return hasil

@@ -1,3 +1,4 @@
+import itertools
 import os
 import sys
 import unittest
@@ -12,6 +13,9 @@ from snap.config import hex_ke_bgr  # noqa: E402
 from snap.glitch import GlitchRenderer, Tempelan  # noqa: E402
 from snap.glitch_score import GHOST_ALPHA, PALETTE, SCORE, validate_score  # noqa: E402
 from test_background import H, W, room  # noqa: E402
+from test_controller_v2 import CFG as CTRL_CFG, FakeSegmenter, Rig  # noqa: E402
+
+DT = 1.0 / 30
 
 # Frames of reference-effect-spider-verse-1.mp4 without any glitch, checked by eye frame by frame.
 CALM_FRAMES = {0, 1, 2, 3, 4, 5, 32, 41, 48, 49, 91, 92, 93}
@@ -132,6 +136,124 @@ class RendererCase(unittest.TestCase):
         half = self.scene[350, 350].astype(np.float32) * (127.0 / 255.0) + (20, 40, 60)
         self.assertLessEqual(float(np.abs(base[350, 350] - half).max()), 1.0)
         np.testing.assert_array_equal(base[600, 1000], self.scene[600, 1000])
+
+
+class LiveGlitchCase(unittest.TestCase):
+    """The Glitch style while visible, through the real SnapController."""
+
+    def setUp(self):
+        self.cfg = dict(CTRL_CFG, style_default="GLITCH")
+        self.rig = Rig(self.cfg)
+        self.hz = self.cfg["glitch_step_hz"]
+
+    def test_steps_follow_the_clock_at_12_hz(self):
+        rig = self.rig
+        t0 = rig.t
+        seen = []
+        while rig.t < t0 + 2.0 - 1e-9:
+            rig.step(rig.t + DT)
+            seen.append(rig.ctrl.glitch_langkah)
+        # A step holds for 1/12 s, so on a 30 fps camera it shows on 2 or 3 frames in turn.
+        runs = [len(list(g)) for _, g in itertools.groupby(seen)]
+        self.assertTrue(set(runs[1:-1]) <= {2, 3}, runs)
+        self.assertEqual(seen[-1], int((rig.t - t0) * self.hz + 1e-6))
+
+    def test_calm_opening_then_the_glitch(self):
+        rig = self.rig
+        t0 = rig.t
+        # Steps 0 to 5 of the score are calm: the camera frame shows as it is.
+        rig.run_until(t0 + 5.5 / self.hz)
+        self.assertTrue(np.array_equal(rig.out, rig.frame))
+        rig.run_until(t0 + 6.5 / self.hz)
+        self.assertEqual(rig.ctrl.glitch_langkah, 6)
+        self.assertFalse(np.array_equal(rig.out, rig.frame))
+
+    def test_a_held_step_keeps_its_shapes(self):
+        rig = self.rig
+        t0 = rig.t
+        rig.run_until(t0 + 8.1 / self.hz)
+        plan = rig.ctrl.glitch._rencana
+        rig.step(t0 + 8.6 / self.hz)
+        self.assertEqual(rig.ctrl.glitch_langkah, 8)
+        self.assertIs(rig.ctrl.glitch._rencana, plan)
+
+    def test_moved_pieces_uncover_the_room(self):
+        rig = self.rig
+        clean = rig.ctrl._tanpa_orang(rig.frame)
+        person = rig.ctrl.matte.core()
+        # With the room learned, the person is replaced by the room (noise synthesis off in these tests).
+        self.assertLessEqual(int(np.abs(clean[person].astype(np.int16) - rig.scene[person]).max()), 2)
+
+    def test_no_glitch_while_learning_the_room_or_with_other_styles(self):
+        rig = self.rig
+        rig.run_until(rig.t + 9.0 / self.hz)
+        rig.ctrl.mulai_rekam_plate(rig.t)
+        rig.step(rig.t + DT)
+        self.assertTrue(np.array_equal(rig.out, rig.frame))
+        self.assertEqual(rig.ctrl.glitch_langkah, -1)
+
+        other = Rig(self.cfg)
+        self.assertTrue(other.ctrl.pilih_gaya("DUST", other.t))
+        other.run_until(other.t + 1.0)
+        self.assertTrue(np.array_equal(other.out, other.frame))
+
+    def test_picking_styles(self):
+        ctrl = self.rig.ctrl
+        self.assertTrue(ctrl.pilih_gaya("ASH", self.rig.t))
+        self.assertEqual(ctrl.gaya, "ASH")
+        self.assertEqual(ctrl.pesan(self.rig.t + 0.1), "Ash")
+        for expected in ("EMBER", "GLITCH", "DUST"):
+            ctrl.ganti_gaya(self.rig.t)
+            self.assertEqual(ctrl.gaya, expected)
+        self.rig.vanish()
+        self.assertFalse(ctrl.pilih_gaya("GLITCH", self.rig.t))
+        self.assertEqual(ctrl.gaya, "DUST")
+        self.assertIn("finished", ctrl.pesan(self.rig.t))
+
+    def test_snap_still_works_with_glitch_and_the_score_restarts_after(self):
+        rig = self.rig
+        rig.invisible()
+        rig.ctrl.picu(rig.t)
+        while rig.ctrl.state != "LIVE":
+            rig.step(rig.t + DT)
+        rig.step(rig.t + DT)
+        self.assertEqual(rig.ctrl.glitch_langkah, 0)
+
+
+class EffectKeysCase(unittest.TestCase):
+    def setUp(self):
+        import main as app
+        self.app = app
+        self.snap = app.ModeSnap(CTRL_CFG, FakeSegmenter(), app.Profiler(30), hold_aktif=True)
+        self.snap.masuk(0.0)
+        self.t = 1.0
+
+    def test_number_keys_pick_directly(self):
+        self.snap.tombol("4", self.t)
+        self.assertEqual(self.snap.ctrl.gaya, "GLITCH")
+        self.snap.tombol("2", self.t)
+        self.assertEqual(self.snap.ctrl.gaya, "ASH")
+        self.snap.tombol("1", self.t)
+        self.assertEqual(self.snap.ctrl.gaya, "DUST")
+
+    def test_effects_menu(self):
+        snap = self.snap
+        snap.tombol("h", self.t)
+        snap.tombol("e", self.t)
+        self.assertTrue(snap.menu)
+        self.assertFalse(snap.bantuan)
+        self.assertIn("4  Glitch", self.app.baris_menu("DUST"))
+        self.assertIn("1  Dust   (on)", self.app.baris_menu("DUST"))
+        img = room(2)
+        before = img.copy()
+        snap.gambar_hud(img, self.t + 1.0, 30.0)
+        self.assertFalse(np.array_equal(img, before))
+        snap.tombol("3", self.t + 1.0)
+        self.assertEqual(snap.ctrl.gaya, "EMBER")
+        self.assertFalse(snap.menu)
+        snap.tombol("e", self.t + 2.0)
+        snap.tombol("e", self.t + 2.1)
+        self.assertFalse(snap.menu)
 
 
 if __name__ == "__main__":

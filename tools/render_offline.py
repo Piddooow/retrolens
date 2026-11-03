@@ -23,6 +23,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 import main as app  # noqa: E402
+from snap.config import STYLES  # noqa: E402
 from snap.profiler import Profiler  # noqa: E402
 from snap_effect import CONFIG, PersonSegmenter, SnapController, validasi_config  # noqa: E402
 
@@ -55,6 +56,7 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, help="override debu_seed")
     parser.add_argument("--fps", type=float, default=30.0, help="fixed clock rate (default 30)")
     parser.add_argument("--no-png", action="store_true", help="skip the PNG sequence")
+    parser.add_argument("--style", choices=STYLES, help="effect style (default: CONFIG style_default)")
     parser.add_argument("--allow-inpaint", action="store_true",
                         help="estimate unseen background (experimental) instead of refusing the snap")
     return parser.parse_args(argv)
@@ -67,6 +69,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg["debu_seed"] = args.seed
     if args.allow_inpaint:
         cfg["allow_inpaint_fallback"] = True
+    if args.style:
+        cfg["style_default"] = args.style
     errors = validasi_config(cfg)
     if errors:
         print("Invalid CONFIG:\n  - " + "\n  - ".join(errors))

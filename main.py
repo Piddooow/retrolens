@@ -12,6 +12,8 @@ import mediapipe as mp
 import numpy as np
 
 from snap import hud
+from snap.config import STYLES
+from snap.glitch_score import SCORE
 from snap.gestures import HoldGestureDetector
 from snap.profiler import Profiler
 from snap.worker import InferenceWorker
@@ -22,7 +24,8 @@ FOLDER = os.path.dirname(os.path.abspath(__file__))
 JENDELA = 'RETROLENS Pake Python'
 PATH_KALIBRASI = os.path.join(FOLDER, "snap_kalibrasi.json")
 FOLDER_REKAMAN = os.path.join(FOLDER, "rekaman")
-BANTUAN_SNAP = "M mode, B learn room, S snap, X style, H help, T trigger, K sound check, D debug, V record, R reset, Q quit"
+BANTUAN_SNAP = ("M mode, B learn room, S snap, 1-4 or X effect, E effects menu, H help, T trigger, K sound check, "
+                "D debug, V record, R reset, Q quit")
 BANTUAN_RETROLENS = "M for snap mode, V to record, Q to quit"
 WARNA_TINT = (235, 175, 90)
 # The D key cycles through these views.
@@ -49,14 +52,14 @@ BANTUAN_KARTU = (
     "Snap: vanish, or come back when invisible",
     "Open palm, 1 s: come back",
     "Thumbs up, 1 s: learn the room again",
-    "Peace sign, 1 s: change style (Dust, Ash, Ember)",
+    "Peace sign, 1 s: next effect (Dust, Ash, Ember, Glitch)",
     "Fist, hold: freeze time during the effect",
     "Pointing up, hold: slow motion during the effect",
     "Rock sign, 1 s: show or hide this help",
     "Thumbs down, 1 s: cancel and go back to normal",
     "",
-    "Keys: S snap, B learn room, X style, H help, R reset",
-    "D debug, V record, Shift+V save frames, M mode, Q quit",
+    "Keys: S snap, B learn room, 1-4 effect, X next effect, E effects menu",
+    "H help, R reset, D debug, V record, Shift+V save frames, M mode, Q quit",
 )
 PETUNJUK_SNAP = {
     "GESTUR": "Snap your fingers to vanish",
@@ -64,6 +67,14 @@ PETUNJUK_SNAP = {
     "ATAU": "Snap your fingers to vanish",
     "DAN": "Snap where I can see and hear it",
 }
+def baris_menu(gaya: str) -> Tuple[str, ...]:
+    """The effects menu card, with the current effect marked."""
+    baris = ["Effects", ""]
+    for i, nama in enumerate(STYLES, start=1):
+        baris.append("%d  %s%s" % (i, STYLE_NAMES[nama], "   (on)" if nama == gaya else ""))
+    return tuple(baris + ["", "Press 1 to %d to pick, E to close" % len(STYLES)])
+
+
 PETUNJUK_PORTAL = "Touch thumb and pinkie to change the filter. M for snap mode"
 NAMA_TRIGGER = {"GESTUR": "gesture", "SUARA": "sound", "ATAU": "gesture or sound", "DAN": "gesture and sound"}
 NAMA_STATE = {SnapController.LIVE: "Live", SnapController.PLATE_CAPTURE: "Learning room",
@@ -485,6 +496,9 @@ class ModeSnap:
         self._denyut = None  # type: Optional[Tuple[float, Tuple[float, float]]]
         self.bantuan = False
         self.t_bantuan = -math.inf
+        # Effects menu card (E); it and the help card never show together.
+        self.menu = False
+        self.t_menu = -math.inf
         self.t_masuk = -math.inf
         self._pudar_tengah = hud.Pudar(cfg["hud_fade_s"])
         self._pudar_toast = hud.Pudar(cfg["hud_fade_s"])
@@ -522,6 +536,7 @@ class ModeSnap:
     def keluar(self, now: float) -> None:
         self.ctrl.reset(now, pudar=False)
         self.bantuan = False
+        self.menu = False
 
     def tutup(self) -> None:
         if self.audio is not None:
@@ -585,6 +600,20 @@ class ModeSnap:
     def ganti_bantuan(self, now: float) -> None:
         self.bantuan = not self.bantuan
         self.t_bantuan = now
+        if self.bantuan and self.menu:
+            self.menu, self.t_menu = False, now
+
+    def ganti_menu(self, now: float) -> None:
+        self.menu = not self.menu
+        self.t_menu = now
+        if self.menu and self.bantuan:
+            self.bantuan, self.t_bantuan = False, now
+
+    def pilih_efek(self, nomor: int, now: float) -> None:
+        """Keys 1 to 4: pick that effect directly; an open effects menu closes."""
+        self.ctrl.pilih_gaya(STYLES[nomor - 1], now)
+        if self.menu:
+            self.menu, self.t_menu = False, now
 
     def _perbarui_tahan(self, now: float, daftar: List[np.ndarray], hasil_tangan, lebar: int) -> None:
         tangan = []  # type: List[Tuple[np.ndarray, str, float, bool]]
@@ -681,6 +710,10 @@ class ModeSnap:
             self.debug = (self.debug + 1) % len(DEBUG_VIEWS)
         elif huruf == "x":
             self.ctrl.ganti_gaya(now)
+        elif huruf in "1234" and len(huruf) == 1 and int(huruf) <= len(STYLES):
+            self.pilih_efek(int(huruf), now)
+        elif huruf == "e":
+            self.ganti_menu(now)
         elif huruf == "h":
             self.ganti_bantuan(now)
         elif huruf == "r":
@@ -729,6 +762,9 @@ class ModeSnap:
         tahap = "ms (avg %d frames): %s  total %.1f" % (
             self.prof.window, "  ".join(self.prof.summary()), self.prof.total())
         tulis(img, tahap, (10, y + 10), skala_muat(tahap, w - 20, 0.5))
+        if self.ctrl.glitch_langkah >= 0:
+            tulis(img, "glitch step %d (score %d)" % (self.ctrl.glitch_langkah, self.ctrl.glitch_langkah % len(SCORE)),
+                  (10, y + 40), 0.5)
         if self.ctrl.state not in (SnapController.LIVE, SnapController.PLATE_CAPTURE):
             tulis(img, "t efek = %.2f s  rate %.2f  butir %d  ukuran %d px  style %s  quality %d" % (
                 self.ctrl.waktu_efek(now), self.ctrl.jam.rate, self.ctrl.butir_tampil, self.ctrl.ukuran_butir,
@@ -824,10 +860,12 @@ class ModeSnap:
             tampil = pudar.get(now)
             if tampil is not None:
                 gambar(img, tampil[0], tampil[1])
-        k = float(smoothstep((now - self.t_bantuan) / self.cfg["help_fade_s"]))
-        alpha_bantuan = k if self.bantuan else 1.0 - k
-        if alpha_bantuan > 0.0:
-            hud.kartu_bantuan(img, BANTUAN_KARTU, alpha_bantuan, self.cfg)
+        for terbuka, sejak, baris in ((self.bantuan, self.t_bantuan, BANTUAN_KARTU),
+                                      (self.menu, self.t_menu, baris_menu(self.ctrl.gaya))):
+            k = float(smoothstep((now - sejak) / self.cfg["help_fade_s"]))
+            alpha_kartu = k if terbuka else 1.0 - k
+            if alpha_kartu > 0.0:
+                hud.kartu_bantuan(img, baris, alpha_kartu, self.cfg)
         self._gambar_cincin(img, now)
 
     def _gambar_cincin(self, img, now: float) -> None:

@@ -8,7 +8,8 @@ geometry is drawn in float32 and stored ready to paste.
 """
 
 import math
-from typing import Any, Dict, List, Optional, Tuple
+import threading
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
@@ -162,6 +163,13 @@ def perluas(kotak: Kotak, pad: int, lebar: int, tinggi: int) -> Kotak:
     return max(0, bx - pad), max(0, by - pad), min(lebar, bx + bw + pad), min(tinggi, by + bh + pad)
 
 
+def perlu_ruang(step: Step) -> bool:
+    """True when the step moves the body away from where the person is, so the room must show there."""
+    if step.get("bg") in ("REGIONS", "HALFTONE"):
+        return False
+    return "cut" in step or any(n == "BODY" and lv > 0 for n, lv in step.get("copies", ()))
+
+
 class Rencana:
     """The geometry of one step, built on its first frame and reused while the step is held."""
 
@@ -190,6 +198,9 @@ class GlitchRenderer:
 
     def __init__(self):
         self._latar: Dict[Tuple[str, int, int, int], Any] = {}
+        # Guards _latar: the backgrounds are built on a helper thread while frames are drawn.
+        self._kunci = threading.Lock()
+        self._dipanaskan: Set[Tuple[int, int]] = set()
         self._rencana = None  # type: Optional[Rencana]
 
     # Full frame backgrounds
@@ -197,18 +208,29 @@ class GlitchRenderer:
     def latar(self, jenis: str, varian: int, lebar: int, tinggi: int) -> Any:
         """REGIONS and HALFTONE: BGR uint8 frame. SHARDS: an overlay (Tempelan)."""
         kunci = (jenis, varian % BACKGROUND_VARIANTS, lebar, tinggi)
-        if kunci not in self._latar:
-            rng = np.random.default_rng(1000 + 17 * kunci[1] + ("REGIONS", "SHARDS", "HALFTONE").index(jenis))
-            buat = {"REGIONS": _wilayah, "SHARDS": lambda g, w, h: Tempelan(_serpihan(g, w, h)),
-                    "HALFTONE": _halftone}[jenis]
-            self._latar[kunci] = buat(rng, lebar, tinggi)
-        return self._latar[kunci]
+        with self._kunci:
+            if kunci not in self._latar:
+                rng = np.random.default_rng(1000 + 17 * kunci[1] + ("REGIONS", "SHARDS", "HALFTONE").index(jenis))
+                buat = {"REGIONS": _wilayah, "SHARDS": lambda g, w, h: Tempelan(_serpihan(g, w, h)),
+                        "HALFTONE": _halftone}[jenis]
+                self._latar[kunci] = buat(rng, lebar, tinggi)
+            return self._latar[kunci]
 
     def siapkan_latar(self, lebar: int, tinggi: int) -> None:
         """Build every background variant now, so no step pays for it later."""
         for jenis in ("REGIONS", "SHARDS", "HALFTONE"):
             for varian in range(BACKGROUND_VARIANTS):
                 self.latar(jenis, varian, lebar, tinggi)
+
+    def panaskan(self, lebar: int, tinggi: int) -> None:
+        """Build the backgrounds for this frame size on a helper thread, once; cheap to call every frame.
+
+        The score's first full frame background comes about a second in, by then they are ready.
+        """
+        if (lebar, tinggi) in self._dipanaskan:
+            return
+        self._dipanaskan.add((lebar, tinggi))
+        threading.Thread(target=self.siapkan_latar, args=(lebar, tinggi), daemon=True).start()
 
     # One frame
 
