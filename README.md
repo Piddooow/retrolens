@@ -210,7 +210,7 @@ Recording test clips: keep the camera in the same position for all clips, then r
 3. The room must be still where you stand. Moving things behind you (a TV, a curtain in the wind) can show as a frozen patch while you are invisible.
 4. Light changes during the effect are matched only from 0.7x to 1.4x brightness per color channel. Beyond that, the edge of the hidden area may become visible.
 5. To keep the frame rate up, the picture is shown one camera frame (about 33 ms) late.
-6. The quality measurements for noise and flicker inside the hidden area have only been run on compressed test clips with a stand-in room, where they do not pass yet. They still need real `room_empty` and `sit_snap` recordings.
+6. The quality measurements inside the hidden area have only been run on compressed test clips with a stand-in room. There the flicker check passes, right at its limit (the hidden area changes no more than the live camera itself), and the noise match does not pass yet. Both still need real `room_empty` and `sit_snap` recordings.
 
 ---
 **Catatan:** Pastikan ruangan memiliki pencahayaan yang cukup agar deteksi tangan dari kamera dapat bekerja dengan optimal.

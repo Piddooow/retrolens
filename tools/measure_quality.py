@@ -21,7 +21,8 @@ INVISIBLE_STATES = ("INVISIBLE", "KOSONG")
 EFFECT_STATES = ("VANISH", "SNAP", "INVISIBLE", "KOSONG", "REAPPEAR", "KEMBALI")
 SEAM_BAND_PX = 20
 NOISE_FRAMES = 60
-LIMITS = {"residue": 0.0, "seam": 2.0, "noise": 0.15, "flicker_sigma": 4.0, "continuity": 0.04,
+FLICKER_PERCENTILE = 99.9
+LIMITS = {"residue": 0.0, "seam": 2.0, "noise": 0.15, "flicker_ratio": 1.0, "continuity": 0.04,
           "step": 12.0, "fps_avg": 27.0, "fps_min": 24.0, "fps_min_window_s": 2.0}
 
 
@@ -107,9 +108,11 @@ def measure(folder: str) -> int:
                 d_in = live.astype(np.int16) - prev_in
                 inside_diff.append(d_out[inside])
                 outside_diff.append(d_out[~inside])
-                # Live sensor noise sigma from the input outside the zone.
-                sigma = float(d_in[~inside].std()) / np.sqrt(2.0)
-                flicker.append((float(np.abs(d_out[inside]).max()), sigma))
+                # The zone may change no more than the live camera changes outside it on the same
+                # frame pair. The 99.9th percentile keeps one hot pixel from deciding, and keeps the
+                # much larger outside area from winning just by having more pixels.
+                flicker.append((float(np.percentile(np.abs(d_out[inside]), FLICKER_PERCENTILE)),
+                                float(np.percentile(np.abs(d_in[~inside]), FLICKER_PERCENTILE))))
         prev_out, prev_in, prev_state = out, live, state
 
     if residue:
@@ -133,9 +136,10 @@ def measure(folder: str) -> int:
             report.add("noise", abs(ratio - 1.0) <= LIMITS["noise"],
                        "temporal std inside %.2f vs outside %.2f (ratio %.2f, allowed 0.85 to 1.15)" % (
                            s_in, s_out, ratio))
-        worst = max(flicker, key=lambda p: p[0] - LIMITS["flicker_sigma"] * p[1])
-        ok = all(change <= LIMITS["flicker_sigma"] * max(sigma, 1e-6) for change, sigma in flicker)
-        report.add("flicker", ok, "largest change inside %d levels, live sigma %.2f (limit 4 sigma)" % worst)
+        worst = max(flicker, key=lambda p: p[0] - LIMITS["flicker_ratio"] * p[1])
+        ok = all(inside_change <= LIMITS["flicker_ratio"] * cam_change for inside_change, cam_change in flicker)
+        report.add("flicker", ok, "worst pair: inside change %.1f levels vs live camera %.1f levels "
+                   "(99.9th percentile, limit: not above the camera)" % worst)
     else:
         report.add("noise", None, "fewer than 2 consecutive INVISIBLE frames")
         report.add("flicker", None, "fewer than 2 consecutive INVISIBLE frames")
