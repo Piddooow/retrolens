@@ -46,6 +46,7 @@ TERUS_GESTUR = {
     "Closed_Fist": ("hold_fist_min_s", (SnapController.VANISH, SnapController.REAPPEAR)),
     "Pointing_Up": (None, (SnapController.VANISH, SnapController.REAPPEAR)),
 }
+CREDIT = "Created by Piddooow @david.antonoo"
 BANTUAN_KARTU = (
     "How to use",
     "",
@@ -60,6 +61,8 @@ BANTUAN_KARTU = (
     "",
     "Keys: S snap, B learn room, 1-4 effect, X next effect, E effects menu",
     "H help, R reset, D debug, V record, Shift+V save frames, M mode, Q quit",
+    "",
+    CREDIT,
 )
 PETUNJUK_SNAP = {
     "GESTUR": "Snap your fingers to vanish",
@@ -992,7 +995,8 @@ def jendela_terbuka() -> bool:
 
 
 def baca_argumen():
-    parser = argparse.ArgumentParser(description="Retrolens: portal filters and the SNAP effect from the webcam.")
+    parser = argparse.ArgumentParser(description="Retrolens: portal filters and the SNAP effect from the webcam. "
+                                                 + CREDIT + ".")
     parser.add_argument("--sumber", help="use a video file instead of the webcam")
     parser.add_argument("--snap", action="store_true", help="start in SNAP mode")
     parser.add_argument("--logs", action="store_true", help="show the MediaPipe start up logs (for debugging)")
@@ -1078,6 +1082,7 @@ def main() -> int:
         jadwal = now
         tampil = None
         jendela_ada = False
+        print("Retrolens. %s." % CREDIT)
         print("%s Press q in the window to quit." % ("Playing the video..." if args.sumber else "Opening the camera..."))
         print("Mode %s. Keys: %s" % (mode, BANTUAN_SNAP if mode == "SNAP" else BANTUAN_RETROLENS))
 

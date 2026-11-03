@@ -1,5 +1,7 @@
 # Retrolens - Hand Tracking Filter & Portal
 
+Created by Piddooow @david.antonoo
+
 Aplikasi filter kamera interaktif menggunakan gesture tangan (hand tracking) dengan MediaPipe dan OpenCV. Anda dapat membuat "portal" dengan jari Anda yang akan menerapkan berbagai filter menarik (Mono, Dual-Tone, Pixelate, Invert, Sepia, Blur, Thermal, Sketch, Glitch, Neon, Galaxy).
 
 There is also a **SNAP mode**: snap your fingers and you turn into dust and vanish, with the room behind you showing through. Snap again to come back. See [SNAP mode](#snap-mode).
@@ -237,3 +239,5 @@ Recording test clips: keep the camera in the same position for all clips, then r
 
 ---
 **Catatan:** Pastikan ruangan memiliki pencahayaan yang cukup agar deteksi tangan dari kamera dapat bekerja dengan optimal.
+
+Created by Piddooow @david.antonoo
