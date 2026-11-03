@@ -6,4 +6,10 @@ __pycache__/
 rekaman/
 uji_lokal/
 snap_kalibrasi.json
-gesture_recognizer.task
+/gesture_recognizer.task
+web/node_modules/
+web/dist/
+web/public/wasm/
+web/test-results/
+web/playwright-report/
+web/public/assets.json

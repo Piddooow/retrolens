@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retrolens</title>
+    <meta name="description" content="Snap your fingers and vanish from your own camera. Created by Piddooow @david.antonoo." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <section id="landing" class="page">
+        <div class="halftone" aria-hidden="true"></div>
+        <h1 class="title plates">Retrolens</h1>
+        <p class="lede">Snap your fingers and vanish from your own camera. Snap again and glitch back in.</p>
+        <p class="note">Everything runs in this browser. The camera picture never leaves your computer.</p>
+        <div id="start-area">
+          <button id="start" class="press" type="button">Open the camera</button>
+          <p class="fine">Works in Chrome or Edge on Windows and Mac, and in Safari on Mac.</p>
+        </div>
+        <div id="unsupported" class="panel" hidden>
+          <h2>Retrolens cannot run in this browser</h2>
+          <p id="unsupported-text"></p>
+          <p>Open this page in Chrome or Edge on a Windows or Mac computer, or in Safari on a Mac.</p>
+        </div>
+        <div id="handheld" class="panel" hidden>
+          <h2>Made for a laptop or desktop</h2>
+          <p>Retrolens needs you a few steps away from the camera, which works best with a computer on a table.</p>
+          <button id="handheld-anyway" class="plain" type="button">Try it on this device anyway</button>
+        </div>
+        <p class="credit">Created by Piddooow @david.antonoo</p>
+      </section>
+
+      <section id="camera-step" class="page" hidden>
+        <h2 class="title small plates">Allow the camera</h2>
+        <p class="lede" id="camera-ask">Your browser is asking to use the camera. Choose Allow.</p>
+        <div id="camera-problem" class="panel" hidden>
+          <h3 id="problem-title"></h3>
+          <ol id="problem-steps"></ol>
+          <button id="retry" class="press" type="button">Try again</button>
+        </div>
+        <button id="camera-back" class="plain" type="button">Back</button>
+      </section>
+
+      <section id="loading" class="page" hidden>
+        <h2 class="title small plates">Almost there</h2>
+        <p class="lede">Getting the hand and person models ready.</p>
+        <div class="bar" role="progressbar" aria-label="Download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="bar-fill"></div>
+        </div>
+        <p id="loading-text">Starting the download</p>
+        <p class="fine">About 22 MB the first time. After that your browser keeps them.</p>
+        <div id="loading-problem" class="panel" hidden>
+          <h3>The models did not load</h3>
+          <p id="loading-error"></p>
+          <button id="reload" class="press" type="button">Try again</button>
+        </div>
+      </section>
+
+      <section id="stage" hidden>
+        <video id="video" playsinline muted></video>
+        <canvas id="gl"></canvas>
+        <canvas id="overlay"></canvas>
+        <p id="status" class="pill" aria-live="polite"></p>
+        <p id="hands" class="pill hands" hidden></p>
+        <div class="stage-buttons">
+          <button id="debug" class="plain" type="button" aria-pressed="false">Show what it sees (D)</button>
+          <button id="close" class="plain" type="button">Close the camera</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

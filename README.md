@@ -6,6 +6,22 @@ Aplikasi filter kamera interaktif menggunakan gesture tangan (hand tracking) den
 
 There is also a **SNAP mode**: snap your fingers and you turn into dust and vanish, with the room behind you showing through. Snap again to come back. See [SNAP mode](#snap-mode).
 
+## In the browser
+
+The web version is in `web/` and needs nothing installed: open the page, allow the camera, and it guides you. It runs on your computer only; the camera picture is never uploaded. It works in Chrome or Edge on Windows and Mac, and in Safari on Mac.
+
+For development:
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173
+npm test           # logic tests (Vitest)
+npm run e2e        # browser tests; set RETROLENS_FAKE_CAMERA to a .y4m clip (see web/playwright.config.ts)
+```
+
+The settings, colors and glitch scores come from the Python app: after changing `snap/config.py` or `snap/glitch_score.py`, run `python tools/export_web_data.py`. The design direction of the web pages is in `web/DESIGN.md`.
+
 ## Quick start (macOS)
 
 1. Open the **Terminal** app.

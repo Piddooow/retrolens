@@ -1,0 +1,1022 @@
+{
+ "palette": {
+  "YELLOW": "#FCDA02",
+  "MAGENTA": "#F72969",
+  "CYAN": "#33D1F7",
+  "GREEN_GHOST": "#21F951",
+  "RED": "#FA020B",
+  "SOFT_RED": "#FA3434",
+  "GREEN": "#0CFD02",
+  "BLUE": "#0330FA",
+  "AQUA": "#02F8FB",
+  "SKY": "#01B2FC",
+  "ORANGE": "#FD8901",
+  "BLACK": "#020202",
+  "DEEP_TEAL": "#226967",
+  "DEEP_RED": "#3C0503",
+  "PURPLE": "#5B509E",
+  "LIME": "#ADFD33",
+  "NAVY": "#03001C",
+  "LIME_RICK": "#86D409",
+  "MAGENTA_RICK": "#C4009D",
+  "YELLOW_RICK": "#F5EA0C",
+  "VIOLET": "#4A2DB7",
+  "VIOLET_EDGE": "#1C06AB",
+  "ORANGE_RED": "#E65609",
+  "PLUM": "#450949",
+  "YELLOW_WARM": "#F4C72A",
+  "MAGENTA_MORTY": "#D20AB4",
+  "CREAM": "#FBFB8C",
+  "ORANGE_MORTY": "#ED8A08",
+  "MINT_MORTY": "#54FA82",
+  "BLUE_MORTY": "#2090DF",
+  "PINK_MORTY": "#E31EE3"
+ },
+ "ghostAlpha": 0.5,
+ "seeThrough": [
+  "MAGENTA",
+  "CYAN",
+  "GREEN_GHOST"
+ ],
+ "score": [
+  {},
+  {},
+  {},
+  {},
+  {},
+  {},
+  {
+   "cut": 1
+  },
+  {
+   "cut": 1
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 1,
+   "copies": [
+    [
+     "LIME",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "SOFT_RED",
+     3
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "BLUE",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "RED",
+    "GREEN",
+    "BLUE"
+   ],
+   "cover": 0.25
+  },
+  {
+   "cut": 3,
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "CYAN",
+     1
+    ]
+   ],
+   "fill": [
+    "BLUE",
+    "GREEN"
+   ],
+   "cover": 0.1
+  },
+  {
+   "cut": 1,
+   "fill": [
+    "RED",
+    "PURPLE",
+    "ORANGE"
+   ],
+   "cover": 0.8,
+   "copies": [
+    [
+     "MAGENTA",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "GREEN",
+    "BLUE",
+    "RED"
+   ],
+   "cover": 0.5
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "BLUE",
+    "RED",
+    "GREEN"
+   ],
+   "cover": 0.85
+  },
+  {
+   "cut": 3,
+   "fill": [
+    "GREEN",
+    "BLUE",
+    "RED"
+   ],
+   "cover": 0.4
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "GREEN"
+   ],
+   "cover": 0.7
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "RED",
+    "BLUE"
+   ],
+   "cover": 0.6
+  },
+  {
+   "cut": 3,
+   "fill": [
+    "AQUA",
+    "GREEN",
+    "YELLOW"
+   ],
+   "cover": 0.6
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     1
+    ],
+    [
+     "MAGENTA",
+     1
+    ],
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {
+   "mirror": "CYAN"
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 1
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 2
+  },
+  {
+   "cut": 1,
+   "copies": [
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {},
+  {
+   "cut": 1,
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "MAGENTA",
+     2
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "CYAN",
+     1
+    ]
+   ],
+   "mirror": "BODY"
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 1
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 1,
+   "copies": [
+    [
+     "GREEN_GHOST",
+     1
+    ],
+    [
+     "GREEN_GHOST",
+     2
+    ]
+   ]
+  },
+  {},
+  {
+   "cut": 1
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     1
+    ],
+    [
+     "MAGENTA",
+     1
+    ],
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "MAGENTA",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "MAGENTA",
+     1
+    ],
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {},
+  {},
+  {
+   "cut": 2
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "GREEN_GHOST",
+     1
+    ],
+    [
+     "GREEN_GHOST",
+     2
+    ]
+   ]
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 1
+  },
+  {
+   "cut": 1,
+   "copies": [
+    [
+     "MAGENTA",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     1
+    ],
+    [
+     "MAGENTA",
+     1
+    ],
+    [
+     "CYAN",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "MAGENTA",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "BLACK",
+    "AQUA",
+    "GREEN"
+   ],
+   "cover": 0.9
+  },
+  {
+   "cut": 1,
+   "fill": [
+    "AQUA"
+   ],
+   "cover": 0.05
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "DEEP_TEAL",
+     2
+    ],
+    [
+     "DEEP_RED",
+     1
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "CYAN",
+     1
+    ],
+    [
+     "MAGENTA",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "MAGENTA",
+     1
+    ],
+    [
+     "BODY",
+     1
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "copies": [
+    [
+     "BODY",
+     3
+    ],
+    [
+     "MAGENTA",
+     3
+    ],
+    [
+     "CYAN",
+     3
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "CYAN",
+     3
+    ]
+   ],
+   "fill": [
+    "BLACK"
+   ],
+   "cover": 0.05
+  },
+  {
+   "cut": 3,
+   "fill": [
+    "BLACK"
+   ],
+   "cover": 0.3
+  },
+  {
+   "cut": 3,
+   "fill": [
+    "BLACK"
+   ],
+   "cover": 0.4
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 3
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "BLUE",
+    "RED",
+    "GREEN",
+    "BLACK"
+   ],
+   "cover": 0.7
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "BLUE",
+    "GREEN"
+   ],
+   "cover": 0.5
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "GREEN",
+    "RED"
+   ],
+   "cover": 0.25
+  },
+  {
+   "cut": 3,
+   "copies": [
+    [
+     "BLUE",
+     2
+    ]
+   ]
+  },
+  {
+   "cut": 3,
+   "copies": [
+    [
+     "BLUE",
+     3
+    ]
+   ]
+  },
+  {
+   "cut": 2
+  },
+  {
+   "cut": 3,
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ],
+    [
+     "BLUE",
+     1
+    ]
+   ]
+  },
+  {
+   "cut": 3,
+   "copies": [
+    [
+     "BODY",
+     2
+    ],
+    [
+     "MAGENTA",
+     2
+    ],
+    [
+     "CYAN",
+     2
+    ],
+    [
+     "BLUE",
+     2
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "copies": [
+    [
+     "CYAN",
+     2
+    ]
+   ]
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "GREEN",
+    "SKY",
+    "BLACK"
+   ],
+   "cover": 0.6
+  },
+  {
+   "cut": 3,
+   "fill": [
+    "BLACK",
+    "ORANGE",
+    "RED"
+   ],
+   "cover": 0.6
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "ORANGE"
+   ],
+   "cover": 0.6
+  },
+  {
+   "cut": 2,
+   "fill": [
+    "GREEN",
+    "AQUA"
+   ],
+   "cover": 0.9
+  },
+  {
+   "cut": 1,
+   "fill": [
+    "AQUA"
+   ],
+   "cover": 0.15
+  },
+  {},
+  {},
+  {}
+ ],
+ "vanishScore": [
+  {
+   "fill": [
+    "NAVY"
+   ],
+   "cover": 0.5,
+   "copies": [
+    [
+     "VIOLET_EDGE",
+     1
+    ]
+   ]
+  },
+  {
+   "fill": [
+    "LIME_RICK",
+    "NAVY"
+   ],
+   "cover": 0.7,
+   "copies": [
+    [
+     "VIOLET_EDGE",
+     1
+    ]
+   ],
+   "cut": 1
+  },
+  {
+   "keep": 0.55,
+   "fill": [
+    "MAGENTA_RICK"
+   ],
+   "cover": 0.5,
+   "cut": 2
+  },
+  {
+   "keep": 0.5,
+   "fill": [
+    "MAGENTA_RICK",
+    "YELLOW_RICK"
+   ],
+   "cover": 0.5,
+   "cut": 2
+  },
+  {
+   "keep": 0.5,
+   "fill": [
+    "YELLOW_RICK",
+    "MAGENTA_RICK"
+   ],
+   "cover": 0.8,
+   "cut": 1
+  },
+  {
+   "keep": 0.3,
+   "fill": [
+    "YELLOW_RICK",
+    "MAGENTA_RICK"
+   ],
+   "cover": 0.7,
+   "cut": 2
+  },
+  {
+   "keep": 0.25,
+   "fill": [
+    "YELLOW_RICK",
+    "VIOLET"
+   ],
+   "cover": 0.7,
+   "cut": 3
+  },
+  {
+   "keep": 0.2,
+   "fill": [
+    "YELLOW_RICK",
+    "VIOLET"
+   ],
+   "cover": 0.6,
+   "cut": 3
+  },
+  {
+   "keep": 0.08
+  },
+  {
+   "keep": 0.08
+  }
+ ],
+ "reappearScore": [
+  {
+   "keep": 0.1,
+   "fill": [
+    "ORANGE_RED",
+    "PLUM"
+   ],
+   "cover": 1.0
+  },
+  {
+   "keep": 0.25,
+   "fill": [
+    "YELLOW_WARM",
+    "MAGENTA_MORTY",
+    "ORANGE_RED"
+   ],
+   "cover": 1.0
+  },
+  {
+   "keep": 0.3,
+   "fill": [
+    "YELLOW_WARM",
+    "ORANGE_RED",
+    "MAGENTA_MORTY",
+    "PLUM"
+   ],
+   "cover": 1.0
+  },
+  {
+   "keep": 0.55,
+   "fill": [
+    "CREAM",
+    "ORANGE_RED",
+    "YELLOW_WARM"
+   ],
+   "cover": 0.9,
+   "cut": 1
+  },
+  {
+   "keep": 0.65,
+   "fill": [
+    "ORANGE_MORTY",
+    "YELLOW_RICK",
+    "CREAM"
+   ],
+   "cover": 0.8,
+   "cut": 2
+  },
+  {
+   "keep": 0.8,
+   "fill": [
+    "MAGENTA_MORTY",
+    "YELLOW_RICK",
+    "ORANGE_MORTY"
+   ],
+   "cover": 0.7,
+   "cut": 1
+  },
+  {
+   "keep": 0.9,
+   "fill": [
+    "MINT_MORTY",
+    "BLUE_MORTY",
+    "MAGENTA_MORTY"
+   ],
+   "cover": 0.6
+  },
+  {
+   "keep": 0.95,
+   "fill": [
+    "MINT_MORTY",
+    "BLUE_MORTY",
+    "PINK_MORTY"
+   ],
+   "cover": 0.5,
+   "cut": 1
+  },
+  {
+   "fill": [
+    "YELLOW_RICK",
+    "MINT_MORTY",
+    "PINK_MORTY"
+   ],
+   "cover": 0.45,
+   "cut": 1
+  },
+  {
+   "fill": [
+    "YELLOW_RICK",
+    "PINK_MORTY"
+   ],
+   "cover": 0.3
+  }
+ ]
+}
