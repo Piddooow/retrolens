@@ -35,6 +35,10 @@ PERCENTILE_STRIDE = 5
 # and for the bursts and blobs.
 GROUP_PAD = 0.25
 EFFECT_PAD = 0.85
+# Below this share kept, what is left of the body is one horizontal strip (#332 to #340 of reference 2).
+STRIP_KEEP = 0.2
+# Random share added to a cell's height (0 top, 1 bottom) when picking which cells stay shown.
+KEEP_JITTER = 0.15
 # Full frame backgrounds keep this many variants each; a step picks one by its seed.
 BACKGROUND_VARIANTS = 4
 MATTE_CUTOFF = 0.5
@@ -173,8 +177,10 @@ def perlu_ruang(step: Step) -> bool:
 class Rencana:
     """The geometry of one step, built on its first frame and reused while the step is held."""
 
-    def __init__(self, kunci: Tuple[int, int, int, int], g: Kotak, e: Kotak):
+    def __init__(self, kunci: Tuple[int, int, int], step: Step, g: Kotak, e: Kotak):
+        # (seed, width, height) and the step itself: holding the step keeps a new step from ever matching.
         self.kunci = kunci
+        self.step = step
         # Group region (body, copies, cuts) and effect region (bursts, blobs), as (x0, y0, x1, y1).
         self.g = g
         self.e = e
@@ -182,6 +188,8 @@ class Rencana:
         # Recolor cells: label map (0 = none, k = cell k) and the palette name of each cell.
         self.sel = None  # type: Optional[np.ndarray]
         self.sel_warna = []  # type: List[str]
+        # Body parts still shown (uint8 0 or 255), None for all of it.
+        self.sisa = None  # type: Optional[np.ndarray]
         self.buram = []  # type: List[Tuple[str, int, int]]
         self.badan = [(0, 0)]  # type: List[Tuple[int, int]]
         self.tembus = []  # type: List[Tuple[str, int, int]]
@@ -246,7 +254,7 @@ class GlitchRenderer:
             return frame
         tinggi, lebar = frame.shape[:2]
         rencana = self._rencana
-        if rencana is None or rencana.kunci != (seed, id(step), lebar, tinggi):
+        if rencana is None or rencana.kunci != (seed, lebar, tinggi) or rencana.step is not step:
             rencana = self._buat_rencana(alpha, step, seed)
             self._rencana = rencana
         if rencana is None:
@@ -270,6 +278,8 @@ class GlitchRenderer:
         x0, y0, x1, y1 = r.g
         a = cv2.convertScaleAbs(cv2.max(alpha[y0:y1, x0:x1], EDGE_LOW), alpha=255.0 / (EDGE_HIGH - EDGE_LOW),
                                 beta=-255.0 * EDGE_LOW / (EDGE_HIGH - EDGE_LOW))
+        if r.sisa is not None:
+            a = cv2.bitwise_and(a, r.sisa)
         body = a > 127
         potong_frame = frame[y0:y1, x0:x1]
         luma = cv2.GaussianBlur(cv2.cvtColor(potong_frame, cv2.COLOR_BGR2GRAY), (0, 0), 1.2)
@@ -332,7 +342,7 @@ class GlitchRenderer:
         rng = np.random.default_rng(seed)
         g = perluas((bx, by, bw, bh), int(round(GROUP_PAD * u)), lebar, tinggi)
         e = perluas((bx, by, bw, bh), int(round(EFFECT_PAD * u)), lebar, tinggi)
-        r = Rencana((seed, id(step), lebar, tinggi), g, e)
+        r = Rencana((seed, lebar, tinggi), step, g, e)
         shape_g = (g[3] - g[1], g[2] - g[0])
         shape_e = (e[3] - e[1], e[2] - e[0])
         kotak_g = (bx - g[0], by - g[1], bw, bh)
@@ -358,6 +368,8 @@ class GlitchRenderer:
         # See-through copies lie over the reference's yellow figure, so the body takes that yellow and the
         # overlaps get the reference's colors.
         r.kuning = any(n in SEE_THROUGH for n, _ in salinan) or cermin in SEE_THROUGH
+        if step.get("keep", 1.0) < 1.0:
+            r.sisa = _sel_sisa(rng, shape_g, kotak_g, alpha[g[1]:g[3], g[0]:g[2]] > MATTE_CUTOFF, step["keep"])
         if "fill" in step:
             r.sel, r.sel_warna = _sel_isi(rng, shape_g, kotak_g, alpha[g[1]:g[3], g[0]:g[2]] > MATTE_CUTOFF,
                                           step["fill"], step["cover"])
@@ -430,6 +442,52 @@ def _sel_isi(rng: np.random.Generator, shape: Tuple[int, int], kotak: Kotak, bod
         if luas >= cover * total:
             break
     return peta, nama
+
+
+def _sel_sisa(rng: np.random.Generator, shape: Tuple[int, int], kotak: Kotak, body: np.ndarray,
+              keep: float) -> np.ndarray:
+    """Mask (uint8 0 or 255) of the body parts still shown, about keep of the body.
+
+    Upper cells go last, like the head that lingers in the reference; below STRIP_KEEP what is left is one
+    horizontal strip across the upper body.
+    """
+    bx, by, bw, bh = kotak
+    hasil = np.zeros(shape, dtype=np.uint8)
+    total = int(np.count_nonzero(body))
+    if total == 0:
+        return hasil
+    target = keep * total
+    if keep < STRIP_KEEP:
+        baris = np.count_nonzero(body, axis=1)
+        y0 = y1 = min(shape[0] - 1, by + int(rng.uniform(0.12, 0.35) * bh))
+        luas = int(baris[y0])
+        while luas < target and (y0 > 0 or y1 < shape[0] - 1):
+            if y1 < shape[0] - 1:
+                y1 += 1
+                luas += int(baris[y1])
+            if luas < target and y0 > 0:
+                y0 -= 1
+                luas += int(baris[y0])
+        hasil[y0:y1 + 1] = 255
+        return hasil
+    label = _sel(rng, shape, kotak, 5)
+    # A little jitter only: the head stays last like Rick's (#304 on) and comes first like Morty's.
+    acak = rng.uniform(0.0, KEEP_JITTER, 32)
+    ys = np.nonzero(body)[0].astype(np.float64)
+    lab = label[body]
+    jumlah = np.bincount(lab, minlength=32)
+    rata_y = np.bincount(lab, weights=ys, minlength=32) / np.maximum(jumlah, 1)
+    prioritas = (rata_y - by) / max(1, bh) + acak
+    tampil = np.zeros(256, dtype=np.uint8)
+    luas = 0
+    for k in np.argsort(prioritas):
+        if jumlah[k] == 0:
+            continue
+        tampil[k] = 255
+        luas += int(jumlah[k])
+        if luas >= target:
+            break
+    return cv2.LUT(label, tampil)
 
 
 def _peta_potong(rng: np.random.Generator, shape: Tuple[int, int], kotak: Kotak, u: float,

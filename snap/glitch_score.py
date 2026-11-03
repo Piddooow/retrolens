@@ -1,7 +1,10 @@
-"""The Glitch style's palette and score, transcribed frame by frame from reference-effect-spider-verse-1.mp4.
+"""The Glitch style's palette and scores, transcribed frame by frame from the references.
 
-The reference runs at 13 fps for 94 frames; the score keeps its order and plays one step per glitch tick.
-Colors are k-means centers measured on the reference frames (RGB hex, converted to BGR where used).
+SCORE (while visible) comes from reference-effect-spider-verse-1.mp4: 94 frames at 13 fps, played in order,
+one step per glitch tick. VANISH_SCORE and REAPPEAR_SCORE come from the finished shots in
+reference-effect-spider-verse-2.mp4: Rick glitching out (frames 296 to 342 at 60 fps) and Morty glitching
+in (frames 8 to 56), about 0.8 s each, so 10 steps at 12 Hz. Colors are k-means centers measured on the
+reference frames (RGB hex, converted to BGR where used).
 
 A step is a dict of operations, all optional (an empty dict is a calm step, the frame stays untouched):
     cut:    1 light, 2 medium, 3 strong. Polygon pieces of the body shift, leaving thin gaps.
@@ -14,6 +17,7 @@ A step is a dict of operations, all optional (an empty dict is a calm step, the 
     burst:  MINT, PASTEL, RED or OUTLINE star burst behind the body (the outline is drawn over it).
     blob:   palette names of large soft shapes behind the body.
     bg:     REGIONS, SHARDS or HALFTONE, a full frame background for this step.
+    keep:   share of the body still shown, 0..1; the rest shows the room (vanish and reappear only).
 """
 
 from typing import Any, Dict, List, Tuple
@@ -62,6 +66,23 @@ PALETTE = {
     # Soft shapes behind the body (#68 to #70).
     "BLOB_CYAN": "#03CAFB",
     "BLOB_GREEN": "#02F379",
+    # Reference 2 recolors: Rick glitching out (#296 to #330).
+    "NAVY": "#03001C",
+    "LIME_RICK": "#86D409",
+    "MAGENTA_RICK": "#C4009D",
+    "YELLOW_RICK": "#F5EA0C",
+    "VIOLET": "#4A2DB7",
+    "VIOLET_EDGE": "#1C06AB",
+    # Reference 2 recolors: Morty glitching in (#8 to #54).
+    "ORANGE_RED": "#E65609",
+    "PLUM": "#450949",
+    "YELLOW_WARM": "#F4C72A",
+    "MAGENTA_MORTY": "#D20AB4",
+    "CREAM": "#FBFB8C",
+    "ORANGE_MORTY": "#ED8A08",
+    "MINT_MORTY": "#54FA82",
+    "BLUE_MORTY": "#2090DF",
+    "PINK_MORTY": "#E31EE3",
 }
 
 # Opacity of the see-through copies; with it MAGENTA over YELLOW gives #F88136 (reference #FC7C29) and
@@ -70,7 +91,7 @@ GHOST_ALPHA = 0.5
 SEE_THROUGH = ("MAGENTA", "CYAN", "GREEN_GHOST")
 BURSTS = ("MINT", "PASTEL", "RED", "OUTLINE")
 BACKGROUNDS = ("REGIONS", "SHARDS", "HALFTONE")
-OPERATIONS = ("cut", "fill", "cover", "copies", "mirror", "burst", "blob", "bg")
+OPERATIONS = ("cut", "fill", "cover", "copies", "mirror", "burst", "blob", "bg", "keep")
 
 Step = Dict[str, Any]
 
@@ -173,6 +194,35 @@ SCORE = [
 ]  # type: List[Step]
 
 
+# Rick glitching out: recolored halves, the body drops away first, the head breaks up, one strip lingers.
+VANISH_SCORE = [
+    {"fill": ("NAVY",), "cover": 0.5, "copies": (("VIOLET_EDGE", 1),)},                              # 296
+    {"fill": ("LIME_RICK", "NAVY"), "cover": 0.7, "copies": (("VIOLET_EDGE", 1),), "cut": 1},        # 300
+    {"keep": 0.55, "fill": ("MAGENTA_RICK",), "cover": 0.5, "cut": 2},                               # 304
+    {"keep": 0.5, "fill": ("MAGENTA_RICK", "YELLOW_RICK"), "cover": 0.5, "cut": 2},                  # 308
+    {"keep": 0.5, "fill": ("YELLOW_RICK", "MAGENTA_RICK"), "cover": 0.8, "cut": 1},                  # 312
+    {"keep": 0.3, "fill": ("YELLOW_RICK", "MAGENTA_RICK"), "cover": 0.7, "cut": 2},                  # 316
+    {"keep": 0.25, "fill": ("YELLOW_RICK", "VIOLET"), "cover": 0.7, "cut": 3},                       # 320
+    {"keep": 0.2, "fill": ("YELLOW_RICK", "VIOLET"), "cover": 0.6, "cut": 3},                        # 328
+    {"keep": 0.08},                                                                                    # 332
+    {"keep": 0.08},                                                                                    # 338
+]  # type: List[Step]
+
+# Morty glitching in: a recolored piece of the head first, then more pieces, recolors fading out.
+REAPPEAR_SCORE = [
+    {"keep": 0.1, "fill": ("ORANGE_RED", "PLUM"), "cover": 1.0},                                       # 8
+    {"keep": 0.25, "fill": ("YELLOW_WARM", "MAGENTA_MORTY", "ORANGE_RED"), "cover": 1.0},             # 14
+    {"keep": 0.3, "fill": ("YELLOW_WARM", "ORANGE_RED", "MAGENTA_MORTY", "PLUM"), "cover": 1.0},      # 22
+    {"keep": 0.55, "fill": ("CREAM", "ORANGE_RED", "YELLOW_WARM"), "cover": 0.9, "cut": 1},           # 26
+    {"keep": 0.65, "fill": ("ORANGE_MORTY", "YELLOW_RICK", "CREAM"), "cover": 0.8, "cut": 2},         # 30
+    {"keep": 0.8, "fill": ("MAGENTA_MORTY", "YELLOW_RICK", "ORANGE_MORTY"), "cover": 0.7, "cut": 1},  # 34
+    {"keep": 0.9, "fill": ("MINT_MORTY", "BLUE_MORTY", "MAGENTA_MORTY"), "cover": 0.6},               # 38
+    {"keep": 0.95, "fill": ("MINT_MORTY", "BLUE_MORTY", "PINK_MORTY"), "cover": 0.5, "cut": 1},       # 42
+    {"fill": ("YELLOW_RICK", "MINT_MORTY", "PINK_MORTY"), "cover": 0.45, "cut": 1},                   # 48
+    {"fill": ("YELLOW_RICK", "PINK_MORTY"), "cover": 0.3},                                             # 52
+]  # type: List[Step]
+
+
 def calm(step: Step) -> bool:
     return not step
 
@@ -200,6 +250,8 @@ def validate_score(score: List[Step]) -> List[str]:
                 errors.append("step %d: unknown blob color" % i)
             elif key == "bg" and value not in BACKGROUNDS:
                 errors.append("step %d: unknown background" % i)
+            elif key == "keep" and not 0.0 < value <= 1.0:
+                errors.append("step %d: keep must be in (0, 1]" % i)
         if ("fill" in step) != ("cover" in step):
             errors.append("step %d: fill and cover go together" % i)
     return errors

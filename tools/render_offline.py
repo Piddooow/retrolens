@@ -128,14 +128,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             info = ctrl.info_kualitas(w, h) if ctrl.state != SnapController.LIVE else {}
             if info.get("zone") is not None:
                 cv2.imwrite(os.path.join(args.out, "zone", name), info["zone"], PNG_PARAMS)
-            if info.get("plate_view") is not None and ctrl.waktu_efek(now) >= ctrl.debu_akhir:
+            if info.get("plate_view") is not None and ctrl.waktu_efek(now) >= ctrl.vanish_akhir:
                 cv2.imwrite(os.path.join(args.out, "plate", name), info["plate_view"], PNG_PARAMS)
             meta["frames"].append({
                 "index": index, "t": round(t_input, 6), "clock": round(now, 6), "state": ctrl.state,
                 "effect_t": round(ctrl.waktu_efek(now), 6), "mass": info.get("mass"),
                 "step_px": info.get("step_px"), "ms": round(ms, 3),
                 "zone": info.get("zone") is not None,
-                "plate": info.get("plate_view") is not None and ctrl.waktu_efek(now) >= ctrl.debu_akhir,
+                "plate": info.get("plate_view") is not None and ctrl.waktu_efek(now) >= ctrl.vanish_akhir,
             })
 
             # The key is handled after the frame is shown, exactly like the live loop.

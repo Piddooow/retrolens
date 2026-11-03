@@ -1,7 +1,8 @@
 """SnapController v2: the SNAP state machine.
 
 LIVE -> VANISH (flash and dissolve) -> INVISIBLE (until a reappear trigger) -> REAPPEAR (the dust
-flies back) -> LIVE, plus PLATE_CAPTURE for learning the room. Cancel returns to LIVE from any state
+flies back) -> LIVE, plus PLATE_CAPTURE for learning the room. With the Glitch style, VANISH and REAPPEAR
+play the glitch scores on the live body instead (no flash), and LIVE plays the glitch score while visible. Cancel returns to LIVE from any state
 with a short eased fade. Effect timing runs on EffectClock, so fist and pointing up can freeze or
 slow it outside the flash.
 """
@@ -20,7 +21,7 @@ from snap.config import STYLES
 from snap.dissolve import DissolveRenderer, smoothstep
 from snap.flash import FlashOverlay
 from snap.glitch import GlitchRenderer, perlu_ruang
-from snap.glitch_score import SCORE
+from snap.glitch_score import REAPPEAR_SCORE, SCORE, VANISH_SCORE
 from snap.matte import MatteEngine
 from snap.quality import QualityLadder
 from snap.segmenter import PersonSegmenter
@@ -69,6 +70,12 @@ class SnapController:
         self.debu_akhir = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
         self.rakit_akhir = cfg["reappear_sweep_s"] + cfg["reappear_life_s"]
         self.reappear_akhir = self.rakit_akhir + cfg["reappear_blend_s"]
+        # Effect time when the current vanish and reappear end: the dust timing above, or the glitch scores'.
+        self.vanish_akhir = self.debu_akhir
+        self.akhir_kembali = self.reappear_akhir
+        # The current vanish or reappear is a glitch one; each effect gets new glitch shapes.
+        self._glitch_efek = False
+        self._efek_ke = 0
 
         self.state = self.LIVE
         self.t0 = 0.0
@@ -135,10 +142,11 @@ class SnapController:
         self._target_waktu = 0.0 if beku else (self.cfg["slow_rate"] if pelan else 1.0)
 
     def kontrol_waktu_aktif(self) -> bool:
-        """Time control works during the dissolve and reappear, never during the flash."""
+        """Time control works during the dissolve and reappear, never during the flash (a glitch vanish has
+        none)."""
         if self.state == self.REAPPEAR:
             return True
-        return self.state == self.VANISH and self.jam.t >= self.flash.akhir
+        return self.state == self.VANISH and (self._glitch_efek or self.jam.t >= self.flash.akhir)
 
     def _tahap(self, nama: str) -> Any:
         return self.prof.stage(nama) if self.prof is not None else contextlib.nullcontext()
@@ -160,7 +168,8 @@ class SnapController:
                         self.set_pesan(teks, now, self.cfg["pesan_detik"] * 2)
             t = self.jam.t
             # The base layer also hides the live person; preparing it here keeps it out of the render stage.
-            if self.state != self.VANISH or (t >= self.t_ganti and not self.flash.putih_penuh(t)):
+            if (self.state != self.VANISH or self._glitch_efek
+                    or (t >= self.t_ganti and not self.flash.putih_penuh(t))):
                 self._dasar(frame_tampil, now)
             return
         with self._tahap("matte"):
@@ -264,7 +273,15 @@ class SnapController:
         self._zf = zf
         self._perkiraan = perkiraan
         self._mulai_buka(now)
-        self.flash.mulai(asal if asal is not None else tuple(self.cfg["flash_asal_cadangan"]))
+        self._glitch_efek = self.gaya == "GLITCH"
+        self._efek_ke += 1
+        if self._glitch_efek:
+            # The live body glitches out; nothing to prepare under a flash.
+            self.vanish_akhir = len(VANISH_SCORE) / float(self.cfg["glitch_step_hz"])
+            self._siap = True
+        else:
+            self.vanish_akhir = self.debu_akhir
+            self.flash.mulai(asal if asal is not None else tuple(self.cfg["flash_asal_cadangan"]))
         self.state = self.VANISH
         self.t0 = now
         self.jam.start(now)
@@ -279,7 +296,7 @@ class SnapController:
         self.ukuran_butir = atur["cell"]
 
     def _mulai_reappear(self, now: float) -> None:
-        """Take the live frame and its matte as the body the dust assembles into."""
+        """Take the live frame and its matte as the body the dust assembles into (or the glitch brings in)."""
         cfg = self.cfg
         self._terapkan_kualitas()
         frame = self._frame_tampil
@@ -294,8 +311,14 @@ class SnapController:
         self._zona = zf > 0.0
         self._zf = zf
         self._dasar_kunci = None
-        timing = (0.0, cfg["reappear_sweep_s"], cfg["reappear_life_s"])
-        self.debu.siapkan(self._beku_tampil, self._matte_beku, zf, self.ukuran_butir, self.gaya, timing)
+        self._glitch_efek = self.gaya == "GLITCH"
+        self._efek_ke += 1
+        if self._glitch_efek:
+            self.akhir_kembali = len(REAPPEAR_SCORE) / float(cfg["glitch_step_hz"])
+        else:
+            self.akhir_kembali = self.reappear_akhir
+            timing = (0.0, cfg["reappear_sweep_s"], cfg["reappear_life_s"])
+            self.debu.siapkan(self._beku_tampil, self._matte_beku, zf, self.ukuran_butir, self.gaya, timing)
         self._siap = True
         self.state = self.REAPPEAR
         self.t0 = now
@@ -312,6 +335,7 @@ class SnapController:
     def _masuk_live(self, now: float) -> None:
         self.state = self.LIVE
         self._glitch_t0 = None
+        self._glitch_efek = False
         self.cooldown_sampai = now + self.cfg["cooldown_detik"]
         self.butir_tampil = 0
         self._target_waktu = 1.0
@@ -393,16 +417,36 @@ class SnapController:
         self._dasar_hasil = (zf, pv)
         return zf, pv
 
-    def _komposisi(self, t: float, frame_tampil: np.ndarray, now: float) -> np.ndarray:
+    def _lapisan_dasar(self, frame_tampil: np.ndarray, now: float) -> Tuple[np.ndarray, Tuple[slice, slice]]:
+        """Base layer: live frame outside the zone, plate view inside, feathered at the edge; and the zone box."""
         zf, pv = self._dasar(frame_tampil, now)
         self._info_dasar = (zf, pv)
         hasil = frame_tampil.copy()
-        # Base layer: live frame outside the zone, plate view inside, feathered at the edge.
         x, y, w, h = cv2.boundingRect((zf > 0.0).view(np.uint8))
+        kotak = (slice(y, y + h), slice(x, x + w))
         if w > 0 and h > 0:
-            kotak = (slice(y, y + h), slice(x, x + w))
             bobot = np.ascontiguousarray(zf[kotak])
             hasil[kotak] = cv2.blendLinear(frame_tampil[kotak], pv[kotak], 1.0 - bobot, bobot)
+        return hasil, kotak
+
+    def _komposisi_glitch(self, t: float, frame_tampil: np.ndarray, now: float) -> np.ndarray:
+        """Glitch vanish or reappear: the pieces of the live body that are still shown, over the base layer."""
+        dasar, _ = self._lapisan_dasar(frame_tampil, now)
+        self.butir_tampil = 0
+        skor = VANISH_SCORE if self.state == self.VANISH else REAPPEAR_SCORE
+        k = min(len(skor) - 1, int(math.floor(t * self.cfg["glitch_step_hz"] + 1e-6)))
+        self.glitch_langkah = k
+        matte = self.matte.matte
+        if matte is None or matte.shape != frame_tampil.shape[:2]:
+            return dasar
+        seed = 1000000 + 1000 * self._efek_ke + (0 if self.state == self.VANISH else 500) + k
+        hasil = self.glitch.render(frame_tampil, matte, dasar, skor[k], seed)
+        # Nobody in view: the base layer is what shows.
+        return dasar if hasil is frame_tampil else hasil
+
+    def _komposisi(self, t: float, frame_tampil: np.ndarray, now: float) -> np.ndarray:
+        hasil, kotak = self._lapisan_dasar(frame_tampil, now)
+        h, w = kotak[0].stop - kotak[0].start, kotak[1].stop - kotak[1].start
         self.butir_tampil = 0
         self._k_blend = 0.0
         if self.state == self.VANISH and t < self.debu_akhir:
@@ -434,7 +478,8 @@ class SnapController:
                 pv = cv2.resize(pv, (lebar, tinggi), interpolation=cv2.INTER_LINEAR)
             info["zone"] = penuh
             info["plate_view"] = pv
-        if not self._siap:
+        if not self._siap or self._glitch_efek:
+            # The glitch changes in steps by design; dust mass and particle steps do not apply to it.
             return info
         effect_t = self.waktu_efek_terakhir
         skala = lebar / float(self.debu.size[0])
@@ -457,20 +502,25 @@ class SnapController:
         t = self.jam.update(now, target)
         self.waktu_efek_terakhir = t
         self._info_dasar = None
-        if self.state == self.VANISH and t >= self.debu_akhir:
+        self.glitch_langkah = -1
+        # The tolerance keeps a summed clock that lands a hair under an end on a frame time from ending a frame
+        # late (10 glitch steps at 12 Hz end exactly on frame 25 at 30 fps).
+        if self.state == self.VANISH and t >= self.vanish_akhir - 1e-6:
             self.state = self.INVISIBLE
             if self._perkiraan:
                 self.set_pesan(MSG_ESTIMATED, now, self.cfg["pesan_detik"] * 2)
         auto = self.cfg["auto_reappear_s"]
-        if self.state == self.INVISIBLE and auto > 0.0 and t >= self.debu_akhir + auto:
+        if self.state == self.INVISIBLE and auto > 0.0 and t >= self.vanish_akhir + auto:
             self._mulai_reappear(now)
             t = self.jam.update(now, 1.0)
             self.waktu_efek_terakhir = t
-        if self.state == self.REAPPEAR and t >= self.reappear_akhir:
+        if self.state == self.REAPPEAR and t >= self.akhir_kembali - 1e-6:
             self._masuk_live(now)
-            return frame_tampil
+            return self._render_live(now, frame_tampil)
 
-        if self.state == self.VANISH and t < self.t_ganti:
+        if self._glitch_efek and self.state in (self.VANISH, self.REAPPEAR):
+            hasil = self._komposisi_glitch(t, frame_tampil, now)
+        elif self.state == self.VANISH and t < self.t_ganti:
             hasil = frame_tampil
         else:
             if not self._siap:
@@ -479,7 +529,7 @@ class SnapController:
                 hasil = np.full_like(frame_tampil, 255)
             else:
                 hasil = self._komposisi(t, frame_tampil, now)
-        if self.state == self.VANISH:
+        if self.state == self.VANISH and not self._glitch_efek:
             hasil = self.flash.komposit(hasil, t)
         self._keluaran = hasil
         return hasil

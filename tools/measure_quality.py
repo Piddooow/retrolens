@@ -16,6 +16,9 @@ from typing import Dict, Iterator, List, Optional, Tuple
 import cv2
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from snap.glitch_score import REAPPEAR_SCORE, VANISH_SCORE  # noqa: E402
+
 # Old state names map to the v2 names so baseline renders can be measured too.
 INVISIBLE_STATES = ("INVISIBLE", "KOSONG")
 EFFECT_STATES = ("VANISH", "SNAP", "INVISIBLE", "KOSONG", "REAPPEAR", "KEMBALI")
@@ -46,6 +49,10 @@ def load(folder: str, sub: str, index: int, flags: int = cv2.IMREAD_COLOR) -> Op
 
 
 def expected_boundaries(cfg: Dict) -> Dict[Tuple[str, str], float]:
+    if cfg.get("style_default") == "GLITCH":
+        # The glitch vanish and reappear last as many glitch steps as their scores have.
+        hz = float(cfg["glitch_step_hz"])
+        return {("VANISH", "INVISIBLE"): len(VANISH_SCORE) / hz, ("REAPPEAR", "LIVE"): len(REAPPEAR_SCORE) / hz}
     end = cfg["debu_mulai_detik"] + cfg["debu_sapuan_detik"] + cfg["debu_umur_detik"]
     table = {("SNAP", "KOSONG"): end, ("VANISH", "INVISIBLE"): end}
     # Renders made before the v2 state machine had a fixed empty and return time.

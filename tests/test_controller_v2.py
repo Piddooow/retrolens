@@ -228,7 +228,10 @@ class TestStyles(unittest.TestCase):
                 rig.invisible()
                 self.assertTrue(np.array_equal(rig.out, rig.scene))
                 rig.ctrl.picu(rig.t)
-                rig.run_until(rig.t + REAPPEAR_END + DT)
+                start = rig.t
+                # The first LIVE frame is the camera frame exactly (Glitch then plays its calm opening).
+                while rig.ctrl.state != "LIVE" and rig.t < start + REAPPEAR_END + DT:
+                    rig.step(rig.t + DT)
                 self.assertEqual(rig.ctrl.state, "LIVE")
                 self.assertTrue(np.array_equal(rig.out, rig.frame))
 

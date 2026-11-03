@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from snap.config import hex_ke_bgr  # noqa: E402
 from snap.glitch import GlitchRenderer, Tempelan  # noqa: E402
-from snap.glitch_score import GHOST_ALPHA, PALETTE, SCORE, validate_score  # noqa: E402
+from snap.glitch_score import GHOST_ALPHA, PALETTE, REAPPEAR_SCORE, SCORE, VANISH_SCORE, validate_score  # noqa: E402
 from test_background import H, W, room  # noqa: E402
 from test_controller_v2 import CFG as CTRL_CFG, FakeSegmenter, Rig  # noqa: E402
 
@@ -44,9 +44,22 @@ class ScoreCase(unittest.TestCase):
         self.assertEqual(validate_score(SCORE), [])
         self.assertEqual({i for i, step in enumerate(SCORE) if not step}, CALM_FRAMES)
 
+    def test_transition_scores(self):
+        # About 0.8 s each in the reference (frames 296 to 342 and 8 to 56 at 60 fps): 10 steps at 12 Hz.
+        for score in (VANISH_SCORE, REAPPEAR_SCORE):
+            self.assertEqual(len(score), 10)
+            self.assertEqual(validate_score(score), [])
+            self.assertTrue(all(step for step in score))
+        keep_out = [step.get("keep", 1.0) for step in VANISH_SCORE]
+        keep_in = [step.get("keep", 1.0) for step in REAPPEAR_SCORE]
+        self.assertEqual(keep_out, sorted(keep_out, reverse=True))
+        self.assertEqual(keep_in, sorted(keep_in))
+        self.assertEqual(keep_in[-1], 1.0)
+
     def test_validator_catches_mistakes(self):
-        bad = [{"cut": 4}, {"fill": ("NOPE",), "cover": 0.5}, {"fill": ("RED",)}, {"bg": "SKY"}, {"zoom": 1}]
-        self.assertEqual(len(validate_score(bad)), 5)
+        bad = [{"cut": 4}, {"fill": ("NOPE",), "cover": 0.5}, {"fill": ("RED",)}, {"bg": "SKY"}, {"zoom": 1},
+               {"keep": 0.0}]
+        self.assertEqual(len(validate_score(bad)), 6)
 
     def test_see_through_copies_give_the_reference_overlaps(self):
         yellow = bgr("YELLOW")
@@ -124,6 +137,15 @@ class RendererCase(unittest.TestCase):
         # slid piece lands inside the body.
         off = (np.abs(out[inner].astype(np.int16) - BODY_GRAY) > 2).any(axis=1)
         self.assertLess(off.mean(), 0.01)
+
+    def test_keep_shows_part_of_the_body_and_the_room_elsewhere(self):
+        inner = cv2.erode(self.body.view(np.uint8), np.ones((9, 9), np.uint8)) > 0
+        for keep in (0.5, 0.08):
+            out = self.r.render(self.frame, self.alpha, self.scene, {"keep": keep}, 9)
+            shown = (np.abs(out[inner].astype(np.int16) - BODY_GRAY) <= 2).all(axis=1).mean()
+            self.assertAlmostEqual(float(shown), keep, delta=0.2 if keep > 0.2 else 0.05)
+            hidden = ~(np.abs(out.astype(np.int16) - BODY_GRAY) <= 2).all(axis=2) & inner
+            np.testing.assert_array_equal(out[hidden], self.scene[hidden])
 
     def test_tempelan_composites_like_over(self):
         base = self.scene.copy()
@@ -218,6 +240,84 @@ class LiveGlitchCase(unittest.TestCase):
             rig.step(rig.t + DT)
         rig.step(rig.t + DT)
         self.assertEqual(rig.ctrl.glitch_langkah, 0)
+
+
+class GlitchTransitionCase(unittest.TestCase):
+    """Glitch vanish and reappear through the real SnapController."""
+
+    def setUp(self):
+        self.cfg = dict(CTRL_CFG, style_default="GLITCH")
+        self.rig = Rig(self.cfg)
+        self.length = len(VANISH_SCORE) / float(self.cfg["glitch_step_hz"])
+
+    def shown(self):
+        """Pixels that differ from the room: what is visible of the person."""
+        return int((self.rig.out != self.rig.scene).any(axis=2).sum())
+
+    def test_vanish_glitches_out_without_a_flash_and_leaves_only_the_room(self):
+        rig = self.rig
+        rig.vanish()
+        start = rig.t
+        self.assertEqual(rig.ctrl.state, "VANISH")
+        self.assertTrue(rig.ctrl.kontrol_waktu_aktif())
+        visible = []
+        while rig.ctrl.state == "VANISH":
+            rig.step(rig.t + DT)
+            self.assertLess(float(rig.out.mean()), 200.0)
+            if rig.ctrl.state == "VANISH":
+                visible.append(self.shown())
+        self.assertAlmostEqual(rig.t - start, self.length, delta=DT + 1e-6)
+        self.assertEqual(rig.ctrl.state, "INVISIBLE")
+        self.assertTrue(np.array_equal(rig.out, rig.scene))
+        # The body drops away: the last steps show far less of it than the first.
+        self.assertLess(np.mean(visible[-5:]), 0.5 * np.mean(visible[:5]))
+
+    def test_reappear_glitches_in_and_ends_on_the_camera_frame(self):
+        rig = self.rig
+        rig.invisible()
+        rig.ctrl.picu(rig.t)
+        start = rig.t
+        rig.step(rig.t + DT)
+        first = self.shown()
+        while rig.ctrl.state == "REAPPEAR":
+            last = self.shown()
+            rig.step(rig.t + DT)
+        self.assertAlmostEqual(rig.t - start, self.length, delta=DT + 1e-6)
+        self.assertEqual(rig.ctrl.state, "LIVE")
+        self.assertTrue(np.array_equal(rig.out, rig.frame))
+        self.assertLess(first, 0.5 * last)
+
+    def test_freeze_holds_a_glitch_step_and_cancel_works(self):
+        rig = self.rig
+        rig.vanish()
+        rig.run_until(rig.t + 0.25)
+        # The clock eases to a stop, then the step holds.
+        for _ in range(30):
+            rig.ctrl.atur_waktu(True, False)
+            rig.step(rig.t + DT)
+        step = rig.ctrl.glitch_langkah
+        for _ in range(30):
+            rig.ctrl.atur_waktu(True, False)
+            rig.step(rig.t + DT)
+        self.assertEqual(rig.ctrl.glitch_langkah, step)
+        self.assertEqual(rig.ctrl.state, "VANISH")
+        rig.ctrl.reset(rig.t)
+        self.assertEqual(rig.ctrl.state, "LIVE")
+        # Cancel during a glitch reappear (a new rig: a cancel starts the snap cooldown).
+        rig = Rig(self.cfg)
+        rig.invisible()
+        rig.ctrl.picu(rig.t)
+        rig.step(rig.t + DT)
+        rig.ctrl.reset(rig.t)
+        self.assertEqual(rig.ctrl.state, "LIVE")
+
+    def test_style_picked_while_invisible_sets_the_reappear(self):
+        rig = Rig(CTRL_CFG)
+        rig.invisible()
+        self.assertTrue(rig.ctrl.pilih_gaya("GLITCH", rig.t))
+        rig.ctrl.picu(rig.t)
+        self.assertTrue(rig.ctrl._glitch_efek)
+        self.assertAlmostEqual(rig.ctrl.akhir_kembali, self.length)
 
 
 class EffectKeysCase(unittest.TestCase):

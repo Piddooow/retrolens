@@ -763,8 +763,12 @@ class ModeSnap:
             self.prof.window, "  ".join(self.prof.summary()), self.prof.total())
         tulis(img, tahap, (10, y + 10), skala_muat(tahap, w - 20, 0.5))
         if self.ctrl.glitch_langkah >= 0:
-            tulis(img, "glitch step %d (score %d)" % (self.ctrl.glitch_langkah, self.ctrl.glitch_langkah % len(SCORE)),
-                  (10, y + 40), 0.5)
+            if self.ctrl.state == SnapController.LIVE:
+                teks = "glitch step %d (score %d)" % (self.ctrl.glitch_langkah, self.ctrl.glitch_langkah % len(SCORE))
+            else:
+                teks = "glitch step %d" % self.ctrl.glitch_langkah
+            # Below the effect line in VANISH and REAPPEAR.
+            tulis(img, teks, (10, y + (40 if self.ctrl.state == SnapController.LIVE else 64)), 0.5)
         if self.ctrl.state not in (SnapController.LIVE, SnapController.PLATE_CAPTURE):
             tulis(img, "t efek = %.2f s  rate %.2f  butir %d  ukuran %d px  style %s  quality %d" % (
                 self.ctrl.waktu_efek(now), self.ctrl.jam.rate, self.ctrl.butir_tampil, self.ctrl.ukuran_butir,
