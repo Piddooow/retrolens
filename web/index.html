@@ -21,8 +21,8 @@
           <button id="start" class="press" type="button">Open the camera</button>
           <p class="fine">Tested in Chrome on a Mac so far. Edge on Windows and Safari on a Mac are being tested.</p>
         </div>
-        <p class="status-note"><strong>Work in progress.</strong> This version opens the camera and shows what the hand
-          and person tracking sees. Vanishing and the glitch come in the next updates.</p>
+        <p class="status-note"><strong>Work in progress.</strong> This version opens the camera and learns the room
+          behind you. Vanishing and the glitch come in the next updates.</p>
         <div id="unsupported" class="panel" hidden>
           <h2>Retrolens cannot run in this browser</h2>
           <p id="unsupported-text"></p>
@@ -67,9 +67,22 @@
         <canvas id="gl"></canvas>
         <canvas id="overlay"></canvas>
         <p id="status" class="pill" aria-live="polite"></p>
-        <p id="hands" class="pill hands" hidden></p>
+        <p id="view-label" class="pill second" hidden></p>
+        <p id="center" class="center" aria-live="assertive" hidden></p>
+        <p id="toast" class="toast" role="status" hidden></p>
+        <aside id="guide" class="guide" aria-labelledby="guide-title">
+          <h2 id="guide-title"></h2>
+          <p id="guide-text"></p>
+          <div id="room-progress">
+            <div class="bar small-bar" role="progressbar" aria-label="Room learned" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="room-fill"></div>
+            </div>
+            <p id="room-percent" class="fine"></p>
+          </div>
+          <button id="learn" class="press" type="button">Count down, then learn (B)</button>
+        </aside>
         <div class="stage-buttons">
-          <button id="debug" class="plain" type="button" aria-pressed="false">Show what it sees (D)</button>
+          <button id="debug" class="plain" type="button">Debug view (D)</button>
           <button id="close" class="plain" type="button">Close the camera</button>
         </div>
       </section>

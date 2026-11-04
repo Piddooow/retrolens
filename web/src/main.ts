@@ -2,9 +2,10 @@
 
 import configData from "./data/config.json";
 import { cameraProblem, openCamera, stopCamera } from "./camera";
+import { Controller } from "./controller";
 import { Inference } from "./inference";
 import type { ResultMessage } from "./protocol";
-import { Stage } from "./stage";
+import { Engine, VIEWS, type View } from "./stage";
 import { missingFeature, platform } from "./support";
 
 const CONFIG = configData.config;
@@ -29,12 +30,16 @@ const where = platform();
 const video = $<HTMLVideoElement>("video");
 let stream: MediaStream | null = null;
 let inference: Inference | null = null;
-let stage: Stage | null = null;
+let engine: Engine | null = null;
+let controller: Controller | null = null;
+let view: View = "off";
 let modelsReady = false;
 let modelsError: string | null = null;
 let delegate = "";
 let running = false;
 let resultTimes: number[] = [];
+/** Capture time of the last processed frame, in seconds: the clock of the controller. */
+let lastNow = 0;
 
 function startModels(): void {
   if (inference) return;
@@ -63,7 +68,7 @@ function startModels(): void {
       showLoadingProblem();
     },
     onResult(result) {
-      draw(result);
+      process(result);
     },
   });
 }
@@ -106,10 +111,23 @@ async function askForCamera(): Promise<void> {
 
 function enterStage(): void {
   show("stage");
-  if (!stage) stage = new Stage($("gl"), $("overlay"));
+  if (!engine) {
+    try {
+      engine = new Engine($("gl"));
+    } catch (error) {
+      modelsError = error instanceof Error ? error.message : String(error);
+      stopRunning();
+      show("loading");
+      showLoadingProblem();
+      return;
+    }
+  }
   running = true;
   resultTimes = [];
   inference?.reset();
+  // A new session learns the room from scratch: the camera may point somewhere else now.
+  controller = null;
+  engine.forget();
   requestAnimationFrame(tick);
 }
 
@@ -125,25 +143,87 @@ function tick(): void {
   requestAnimationFrame(tick);
 }
 
-function draw(result: ResultMessage): void {
-  if (!running || !stage) {
+function process(result: ResultMessage): void {
+  if (!running || !engine) {
     result.bitmap.close();
     return;
   }
-  stage.draw(result);
+  const now = result.ts / 1000;
+  lastNow = now;
+  if (engine.load(result) || !controller) controller = new Controller(engine.room!, engine.matte!);
   result.bitmap.close();
-  const now = performance.now();
-  resultTimes.push(now);
-  while (resultTimes.length && resultTimes[0] < now - 1000) resultTimes.shift();
-  const model = Math.round(result.handMs + result.segmenterMs);
-  $("status").textContent = `${resultTimes.length} fps · models ${model} ms on the ${delegate}`;
-  const hands = $("hands");
-  hands.hidden = !stage.showDebug;
-  if (stage.showDebug) {
-    hands.textContent = result.hands.length
-      ? result.hands.map((h, i) => `Hand ${i + 1}: ${h.gesture} ${h.score.toFixed(2)}`).join(" · ")
-      : "No hands in view";
+  controller.observe(now, engine.frame!, engine.mask, engine.maskData);
+  engine.draw(view);
+  drawHands(result);
+  updateHud(now, result);
+}
+
+function drawHands(result: ResultMessage): void {
+  const canvas = $<HTMLCanvasElement>("overlay");
+  const ctx = canvas.getContext("2d")!;
+  if (canvas.width !== result.bitmap.width || canvas.height !== result.bitmap.height) {
+    canvas.width = result.bitmap.width;
+    canvas.height = result.bitmap.height;
   }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (view === "off") return;
+  ctx.fillStyle = "#33D1F7";
+  for (const hand of result.hands) {
+    for (const i of [0, 4, 8, 9, 12, 16, 20]) {
+      ctx.beginPath();
+      ctx.arc(hand.landmarks[2 * i] * canvas.width, hand.landmarks[2 * i + 1] * canvas.height, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function updateHud(now: number, result: ResultMessage): void {
+  const c = controller!;
+  const time = performance.now();
+  resultTimes.push(time);
+  while (resultTimes.length && resultTimes[0] < time - 1000) resultTimes.shift();
+  const status = $("status");
+  const room = document.createElement("span");
+  room.className = c.bgReady ? "ready" : "learning";
+  room.textContent = c.bgReady ? "Ready" : `Learning ${c.bgPercent}%`;
+  status.replaceChildren(room, ` · ${resultTimes.length} fps`);
+
+  const label = $("view-label");
+  label.hidden = view === "off";
+  if (view !== "off") {
+    const hands = result.hands.length
+      ? result.hands.map((h, i) => `hand ${i + 1}: ${h.gesture} ${h.score.toFixed(2)}`).join(", ")
+      : "no hands";
+    const model = Math.round(result.handMs + result.segmenterMs);
+    label.textContent = `Debug view: ${view} (D for next) · ${hands} · models ${model} ms on the ${delegate}`;
+  }
+
+  const center = $("center");
+  if (c.state === "PLATE_CAPTURE") {
+    const left = c.countdownLeft(now);
+    center.textContent = left > 0 ? `Step out of the frame ${left}` : "Learning the room...";
+    center.hidden = false;
+  } else {
+    center.hidden = true;
+  }
+
+  const toast = $("toast");
+  const message = c.message(now);
+  toast.hidden = !message;
+  if (message && toast.textContent !== message) toast.textContent = message;
+
+  $("guide-title").textContent = c.bgReady ? "Step 1 of 3: done" : "Step 1 of 3: learn the room";
+  $("guide-text").textContent = c.bgReady
+    ? "The room is learned. Step back in. Picking an effect and vanishing come in the next update."
+    : "Step out of the camera's view and keep still for a second. Retrolens remembers the room behind you, "
+      + "so it can show the room when you vanish.";
+  $("room-progress").hidden = c.bgReady;
+  $("room-fill").style.width = `${c.bgPercent}%`;
+  $("room-progress").querySelector(".bar")!.setAttribute("aria-valuenow", String(c.bgPercent));
+  $("room-percent").textContent = `Room learned: ${c.bgPercent}%`;
+  const learn = $<HTMLButtonElement>("learn");
+  learn.hidden = c.bgReady;
+  learn.disabled = c.state !== "LIVE";
 }
 
 function stopRunning(): void {
@@ -158,10 +238,12 @@ function closeCamera(): void {
   show("landing");
 }
 
-function toggleDebug(): void {
-  if (!stage) return;
-  stage.showDebug = !stage.showDebug;
-  $("debug").setAttribute("aria-pressed", String(stage.showDebug));
+function nextView(): void {
+  view = VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length];
+}
+
+function learnRoom(): void {
+  controller?.startRoomCapture(lastNow);
 }
 
 function setUp(): void {
@@ -187,11 +269,14 @@ function setUp(): void {
   $("camera-back").addEventListener("click", () => show("landing"));
   $("reload").addEventListener("click", () => location.reload());
   $("close").addEventListener("click", closeCamera);
-  $("debug").addEventListener("click", toggleDebug);
+  $("debug").addEventListener("click", nextView);
+  $("learn").addEventListener("click", learnRoom);
   document.addEventListener("keydown", (event) => {
     if (!running || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === "d" || event.key === "D") toggleDebug();
-    else if (event.key === "Escape") closeCamera();
+    const key = event.key.toLowerCase();
+    if (key === "d") nextView();
+    else if (key === "b") learnRoom();
+    else if (key === "escape") closeCamera();
   });
 }
 

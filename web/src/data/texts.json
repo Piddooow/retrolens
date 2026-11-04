@@ -1,0 +1,12 @@
+{
+ "background": {
+  "learned": "Background learned",
+  "moved": "Camera moved. Step out for a moment so I can relearn the room",
+  "capture": {
+   "ok": "Background learned",
+   "person": "Someone is still in the frame. Step out and press B again",
+   "moving": "The picture kept moving. Keep the camera still and press B again",
+   "mismatch": "That did not look like the room. Do not cover the camera, then press B again"
+  }
+ }
+}

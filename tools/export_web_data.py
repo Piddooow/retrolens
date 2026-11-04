@@ -15,6 +15,7 @@ from typing import Any, Dict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from snap.background import CAPTURE_MESSAGES, MSG_LEARNED, MSG_MOVED  # noqa: E402
 from snap.config import CONFIG, MODE_TRIGGER, REFERENCE_FPS, STYLES  # noqa: E402
 from snap.glitch_score import GHOST_ALPHA, PALETTE, REAPPEAR_SCORE, SCORE, SEE_THROUGH, VANISH_SCORE  # noqa: E402
 
@@ -25,6 +26,7 @@ def files() -> Dict[str, Any]:
     return {
         "config.json": {"config": CONFIG, "styles": list(STYLES), "modeTrigger": list(MODE_TRIGGER),
                         "referenceFps": REFERENCE_FPS},
+        "texts.json": {"background": {"learned": MSG_LEARNED, "moved": MSG_MOVED, "capture": CAPTURE_MESSAGES}},
         "glitch.json": {"palette": PALETTE, "ghostAlpha": GHOST_ALPHA, "seeThrough": list(SEE_THROUGH),
                         "score": SCORE, "vanishScore": VANISH_SCORE, "reappearScore": REAPPEAR_SCORE},
     }

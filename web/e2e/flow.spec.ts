@@ -21,11 +21,14 @@ test("landing, camera, models, then the live stage", async ({ page }) => {
   const status = await page.locator("#status").textContent();
   console.log("status after 5 s:", status);
 
-  // D shows what the models see: the person tint and a hands line.
+  // D cycles the debug views: the matte first, with what the models saw.
   await page.keyboard.press("d");
-  await expect(page.locator("#hands")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Show what it sees/ })).toHaveAttribute("aria-pressed", "true");
-  await page.screenshot({ path: "test-results/stage-debug.png" });
+  await expect(page.locator("#view-label")).toContainText("Debug view: matte");
+  await expect(page.locator("#view-label")).toContainText("models");
+  await page.screenshot({ path: "test-results/stage-matte.png" });
+  await page.getByRole("button", { name: "Debug view (D)" }).click();
+  await expect(page.locator("#view-label")).toContainText("Debug view: zone");
+  await page.screenshot({ path: "test-results/stage-zone.png" });
 
   await page.getByRole("button", { name: "Close the camera" }).click();
   await expect(page.locator("#landing")).toBeVisible();
